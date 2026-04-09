@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Shield, Activity, Clock, Search, Bell, Settings, LayoutDashboard, AlertCircle, BookOpen, LogOut, Terminal, Database, Zap, UploadCloud, Server, PieChart, Moon, Sun } from 'lucide-react';
+import { Shield, Activity, Clock, Search, Bell, Settings, LayoutDashboard, AlertCircle, BookOpen, LogOut, Terminal, Database, Zap, UploadCloud, Server, PieChart, Moon, Sun, Download, FileText, X } from 'lucide-react';
 import { authClient } from '@/lib/auth-client';
 import { useRouter } from 'next/navigation';
 import AnalyticsView from './AnalyticsView';
@@ -15,18 +15,47 @@ export default function Dashboard() {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isCalling, setIsCalling] = useState(false);
   const [callStatus, setCallStatus] = useState('Idle');
-  
-  // Knowledge Base State
-  const [uploadStatus, setUploadStatus] = useState('');
-  
-  // Health State
-  const [healthStatus, setHealthStatus] = useState<any>(null);
 
+  // Trigger History State
+  const [recentCalls, setRecentCalls] = useState<any[]>([]);
+  const [selectedTranscript, setSelectedTranscript] = useState<any>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  
   useEffect(() => {
     if (!isPending && !session) {
       router.push('/signin');
     }
   }, [session, isPending, router]);
+
+  useEffect(() => {
+    if (activeView === 'trigger') {
+      const fetchHistory = async () => {
+        try {
+          const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+          const response = await fetch(`${apiUrl}/api/calls/history`);
+          if (response.ok) {
+             const data = await response.json();
+             setRecentCalls(data);
+          }
+        } catch (e) {
+          console.error('Failed to fetch history', e);
+        }
+      };
+      fetchHistory();
+    }
+  }, [activeView, callStatus]);
+
+  const downloadTranscriptFile = (transcript: string, callId: string) => {
+    const blob = new Blob([transcript], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `transcript-${callId}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   const handleCall = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -234,7 +263,97 @@ export default function Dashboard() {
                 </p>
               </div>
             )}
+
+            <div style={{ marginTop: '3rem' }}>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '1rem', color: isDarkMode ? '#f8fafc' : '#0f172a' }}>Recent Outbound Calls</h3>
+                
+                <div style={{ background: isDarkMode ? '#1e293b' : 'white', borderRadius: '12px', border: `1px solid ${isDarkMode ? '#334155' : '#e2e8f0'}`, overflow: 'hidden' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                        <thead style={{ background: isDarkMode ? '#0f172a' : '#f8fafc', borderBottom: `1px solid ${isDarkMode ? '#334155' : '#e2e8f0'}` }}>
+                            <tr>
+                                <th style={{ padding: '12px 16px', fontSize: '0.85rem', color: isDarkMode ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Phone Number</th>
+                                <th style={{ padding: '12px 16px', fontSize: '0.85rem', color: isDarkMode ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Status</th>
+                                <th style={{ padding: '12px 16px', fontSize: '0.85rem', color: isDarkMode ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Date</th>
+                                <th style={{ padding: '12px 16px', fontSize: '0.85rem', color: isDarkMode ? '#94a3b8' : '#64748b', fontWeight: '600', textAlign: 'right' }}>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {recentCalls.map((call, idx) => (
+                                <tr key={idx} style={{ borderBottom: `1px solid ${isDarkMode ? '#334155' : '#e2e8f0'}` }}>
+                                    <td style={{ padding: '12px 16px', fontSize: '0.9rem', color: isDarkMode ? '#f8fafc' : '#1e293b', fontWeight: '500' }}>{call.phone_number}</td>
+                                    <td style={{ padding: '12px 16px' }}>
+                                        <span style={{ 
+                                            background: call.status === 'completed' ? (isDarkMode ? 'rgba(16, 185, 129, 0.2)' : '#ecfdf5') : (isDarkMode ? 'rgba(245, 158, 11, 0.2)' : '#fffbeb'),
+                                            color: call.status === 'completed' ? '#10b981' : '#f59e0b',
+                                            padding: '4px 10px', borderRadius: '99px', fontSize: '0.75rem', fontWeight: '600'
+                                        }}>
+                                            {call.status || 'unknown'}
+                                        </span>
+                                    </td>
+                                    <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: isDarkMode ? '#94a3b8' : '#64748b' }}>
+                                        {call.created_at ? new Date(call.created_at).toLocaleString() : 'N/A'}
+                                    </td>
+                                    <td style={{ padding: '12px 16px', textAlign: 'right', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                                        <button 
+                                            onClick={() => { setSelectedTranscript(call); setIsModalOpen(true); }}
+                                            style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 12px', background: isDarkMode ? '#334155' : '#f1f5f9', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', color: isDarkMode ? '#e2e8f0' : '#475569', fontWeight: '600' }}
+                                        >
+                                            <FileText size={14} /> View
+                                        </button>
+                                        <button 
+                                            onClick={() => downloadTranscriptFile(call.transcript || 'No transcript', call.call_id)}
+                                            style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 12px', background: 'transparent', border: `1px solid ${isDarkMode ? '#334155' : '#cbd5e1'}`, borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', color: isDarkMode ? '#e2e8f0' : '#475569', fontWeight: '600' }}
+                                        >
+                                            <Download size={14} /> DL
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                            {recentCalls.length === 0 && (
+                                <tr>
+                                    <td colSpan={4} style={{ padding: '24px', textAlign: 'center', color: isDarkMode ? '#64748b' : '#94a3b8', fontSize: '0.9rem' }}>
+                                        No recent calls found.
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
           </section>
+        )}
+
+        {/* Transcript Modal Overlay */}
+        {isModalOpen && selectedTranscript && (
+            <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' }}>
+                <div className="animate-fade-in" style={{ width: '100%', maxWidth: '700px', background: isDarkMode ? '#0f172a' : 'white', borderRadius: '16px', border: `1px solid ${isDarkMode ? '#334155' : '#e2e8f0'}`, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '80vh' }}>
+                    <div style={{ padding: '24px', borderBottom: `1px solid ${isDarkMode ? '#334155' : '#e2e8f0'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                            <h3 style={{ margin: 0, fontSize: '1.25rem', color: isDarkMode ? 'white' : '#0f172a' }}>Call Transcript</h3>
+                            <p style={{ margin: '4px 0 0 0', fontSize: '0.9rem', color: isDarkMode ? '#94a3b8' : '#64748b' }}>{selectedTranscript.phone_number}</p>
+                        </div>
+                        <button onClick={() => setIsModalOpen(false)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: isDarkMode ? '#94a3b8' : '#64748b' }}>
+                            <X size={24} />
+                        </button>
+                    </div>
+                    <div style={{ padding: '24px', overflowY: 'auto', flex: 1, background: isDarkMode ? '#1e293b' : '#f8fafc' }}>
+                        <pre style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word', fontFamily: 'monospace', fontSize: '0.9rem', color: isDarkMode ? '#e2e8f0' : '#334155', margin: 0, lineHeight: '1.5' }}>
+                            {selectedTranscript.transcript || 'No transcript generated for this log.'}
+                        </pre>
+                    </div>
+                    <div style={{ padding: '16px 24px', borderTop: `1px solid ${isDarkMode ? '#334155' : '#e2e8f0'}`, display: 'flex', justifyContent: 'flex-end', gap: '16px' }}>
+                        <button onClick={() => setIsModalOpen(false)} style={{ padding: '10px 20px', background: 'transparent', border: `1px solid ${isDarkMode ? '#475569' : '#cbd5e1'}`, borderRadius: '8px', cursor: 'pointer', color: isDarkMode ? 'white' : '#0f172a', fontWeight: '500' }}>
+                            Close
+                        </button>
+                        <button 
+                            onClick={() => downloadTranscriptFile(selectedTranscript.transcript || 'No transcript', selectedTranscript.call_id)}
+                            style={{ padding: '10px 20px', background: '#3b82f6', border: 'none', borderRadius: '8px', cursor: 'pointer', color: 'white', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}
+                        >
+                            <Download size={16} /> Download .txt
+                        </button>
+                    </div>
+                </div>
+            </div>
         )}
 
 

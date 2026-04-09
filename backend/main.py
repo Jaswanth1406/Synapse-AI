@@ -236,6 +236,33 @@ async def schedule_call(payload: ScheduleCallPayload):
         "max_retries_configured": payload.retry_count
     }
 
+@app.get("/api/calls/history")
+async def get_call_history(request: Request):
+    """
+    Returns the most recent 50 outgoing calls for the UI history list.
+    """
+    pool = getattr(request.app.state, "pool", None)
+    if not pool:
+        return []
+        
+    async with pool.acquire() as conn:
+        records = await conn.fetch('''
+            SELECT call_id, phone_number, status, intent, transcript, created_at 
+            FROM call_transcripts 
+            ORDER BY created_at DESC 
+            LIMIT 50
+        ''')
+        
+    # Serialize datetimes safely
+    result = []
+    for r in records:
+        d = dict(r)
+        if d.get('created_at'):
+            d['created_at'] = d['created_at'].isoformat()
+        result.append(d)
+        
+    return result
+
 @app.get("/api/analytics")
 async def get_dashboard_analytics(request: Request):
     """
