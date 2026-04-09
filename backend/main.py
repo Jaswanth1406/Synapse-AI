@@ -1,7 +1,11 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
 import httpx
 import os
+from dotenv import load_dotenv
+load_dotenv("../frontend/.env") 
+from twilio.rest import Client
 from crm_connector import push_unified_event, map_lead_status
 
 app = FastAPI(title="Vedaspark AI - Python Backend")
@@ -91,6 +95,55 @@ async def upload_rag_document(file: UploadFile = File(...)):
 @app.get("/health")
 def health_check():
     return {"status": "ok", "service": "Vedaspark AI Orchestrator"}
+
+class TwilioCallPayload(BaseModel):
+    phone_number: str
+
+@app.post("/api/calls/twilio/initiate")
+async def initiate_twilio_call(payload: TwilioCallPayload):
+    account_sid = os.environ.get("TWILIO_SID")
+    auth_token = os.environ.get("TWILIO_AUTH")
+    from_number = os.environ.get("TWILIO_PHONE", "+1234567890")
+    backend_url = os.environ.get("BACKEND_PUBLIC_URL", "http://localhost:8000")
+    
+    if not account_sid or not auth_token:
+        raise HTTPException(status_code=500, detail="Twilio credentials not configured")
+        
+    try:
+        twiml_url = f"{backend_url}/api/webhooks/twilio/twiml"
+        
+        client = Client(account_sid, auth_token)
+        call = client.calls.create(
+            to=payload.phone_number,
+            from_=from_number,
+            url=twiml_url
+        )
+            
+        return {"status": "success", "message": "Call initiated", "call_sid": call.sid}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.api_route("/api/webhooks/twilio/twiml", methods=["GET", "POST"])
+async def twilio_twiml_webhook(request: Request):
+    """
+    Webhook that Twilio hits when the call connects.
+    Returns TwiML to stream the audio directly to the Dograh AI Voice Engine.
+    """
+    # Fetch Dograh Agent ID securely loaded from .env
+    agent_id = os.environ.get("DOGRAH_AGENT_ID", "default_agent_id")
+    
+    # Configure the WebSocket URL based on Dograh's standard API format
+    # Ensure this domain matches your Dograh AI instance (e.g. wss://api.dograh.com/v1/...)
+    dograh_ws_url = f"wss://api.dograh.com/v1/calls/twilio/stream/{agent_id}"
+
+    twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Connect>
+        <Stream url="{dograh_ws_url}" />
+    </Connect>
+</Response>'''
+    return Response(content=twiml, media_type="text/xml")
+
 
 if __name__ == "__main__":
     import uvicorn
