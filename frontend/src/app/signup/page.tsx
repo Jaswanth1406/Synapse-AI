@@ -2,33 +2,36 @@
 
 import { useState } from 'react';
 import { authClient } from '@/lib/auth-client';
-import { Activity, Mail, Lock, ArrowRight } from 'lucide-react';
+import { Activity, Mail, Lock, User, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
-export default function SignIn() {
+export default function SignUp() {
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const router = useRouter();
 
-  const handleSignIn = async (e: React.FormEvent) => {
+  const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
     
     try {
-        const { data, error } = await authClient.signIn.email({
+        const { data, error } = await authClient.signUp.email({
             email,
-            password
+            password,
+            name
         });
         if (error) {
-            setError(error.message || 'An error occurred during sign in');
+            setError(error.message || 'An error occurred during sign up');
         } else {
-            // Redirect to dashboard
-            window.location.href = '/dashboard';
+            router.push('/dashboard');
         }
     } catch (err: any) {
-        setError(err.message || 'An error occurred');
+        setError(err.message || 'An error occurred during sign up');
     } finally {
         setLoading(false);
     }
@@ -44,7 +47,7 @@ export default function SignIn() {
         callbackURL: '/dashboard'
       });
       if (error) {
-        setError(error.message || 'An error occurred during Google sign in');
+        setError(error.message || 'An error occurred during Google sign up');
         setLoading(false);
       }
     } catch (err: any) {
@@ -63,8 +66,8 @@ export default function SignIn() {
           <h2 style={{ fontSize: '1.5rem', fontWeight: '800', letterSpacing: '-0.5px' }}>SYNAPSE <span style={{ fontWeight: '400' }}>AI</span></h2>
         </div>
         
-        <h1 style={{ fontSize: '1.5rem', marginBottom: '0.5rem', fontWeight: '700' }}>Welcome Back</h1>
-        <p style={{ color: '#64748b', marginBottom: '2rem', textAlign: 'center', fontSize: '0.9rem' }}>Sign in to continue to your dashboard</p>
+        <h1 style={{ fontSize: '1.5rem', marginBottom: '0.5rem', fontWeight: '700' }}>Create an Account</h1>
+        <p style={{ color: '#64748b', marginBottom: '2rem', textAlign: 'center', fontSize: '0.9rem' }}>Sign up to access your dashboard</p>
         
         {error && (
             <div style={{ width: '100%', padding: '12px', background: '#fef2f2', color: '#ef4444', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.85rem', border: '1px solid #fca5a5' }}>
@@ -72,7 +75,22 @@ export default function SignIn() {
             </div>
         )}
         
-        <form onSubmit={handleSignIn} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <form onSubmit={handleSignUp} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div>
+            <label style={{ display: 'block', marginBottom: '0.5rem', color: '#64748b', fontWeight: '600', fontSize: '0.85rem' }}>Full Name</label>
+            <div style={{ position: 'relative' }}>
+                <User size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                <input 
+                  type="text" 
+                  required
+                  placeholder="John Doe"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  style={{ width: '100%', padding: '12px 16px 12px 36px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#f8fafc', color: '#0f172a', fontFamily: 'inherit', fontSize: '0.95rem', outline: 'none' }}
+                />
+            </div>
+          </div>
+          
           <div>
             <label style={{ display: 'block', marginBottom: '0.5rem', color: '#64748b', fontWeight: '600', fontSize: '0.85rem' }}>Email Address</label>
             <div style={{ position: 'relative' }}>
@@ -104,7 +122,7 @@ export default function SignIn() {
           </div>
           
           <button type="submit" disabled={loading} className="btn-primary" style={{ width: '100%', padding: '12px', borderRadius: '8px', marginTop: '1rem', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', opacity: loading ? 0.7 : 1 }}>
-            {loading ? 'Signing In...' : 'Sign In'} <ArrowRight size={16} />
+            {loading ? 'Signing Up...' : 'Create Account'} <ArrowRight size={16} />
           </button>
         </form>
 
@@ -130,7 +148,7 @@ export default function SignIn() {
         </button>
         
         <p style={{ marginTop: '2rem', fontSize: '0.85rem', color: '#64748b' }}>
-            Don't have an account? <Link href="/signup" style={{ color: '#10b981', fontWeight: '600', textDecoration: 'none' }}>Create Account</Link>
+            Already have an account? <Link href="/signin" style={{ color: '#10b981', fontWeight: '600', textDecoration: 'none' }}>Sign In here</Link>
         </p>
       </div>
     </div>

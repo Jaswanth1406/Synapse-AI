@@ -236,18 +236,95 @@ async def schedule_call(payload: ScheduleCallPayload):
         "max_retries_configured": payload.retry_count
     }
 
-from fastapi import UploadFile, File
+@app.get("/api/analytics")
+async def get_dashboard_analytics(request: Request):
+    """
+    Returns aggregated metrics from the call_transcripts table.
+    """
+    pool = getattr(request.app.state, "pool", None)
+    if not pool:
+        return {"total_runs": 0, "dispositions": [], "duration_stats": []}
+        
+    async with pool.acquire() as conn:
+        # 1. Total Workflow Runs
+        total_runs = await conn.fetchval('SELECT COUNT(*) FROM call_transcripts')
+        
+        # 2. Transferred Calls (Assuming status or intent corresponds to XFER, or just 0 for now)
+        transfer_count = await conn.fetchval("SELECT COUNT(*) FROM call_transcripts WHERE status='transferred' OR intent='transfer'")
+        
+        # 3. Dispositions
+        disp_records = await conn.fetch("SELECT COALESCE(status, 'UNKNOWN') as name, COUNT(*) as value FROM call_transcripts GROUP BY status")
+        dispositions = [dict(r) for r in disp_records]
+        
+        # 4. Duration Stats
+        # Build histogram buckets: 0-10s, 10-30s, 30-60s, 60-120s, 120-180s, >180s
+        duration_buckets = await conn.fetch('''
+            SELECT 
+                CASE 
+                    WHEN call_duration_seconds <= 10 THEN '0-10s'
+                    WHEN call_duration_seconds > 10 AND call_duration_seconds <= 30 THEN '10-30s'
+                    WHEN call_duration_seconds > 30 AND call_duration_seconds <= 60 THEN '30-60s'
+                    WHEN call_duration_seconds > 60 AND call_duration_seconds <= 120 THEN '60-120s'
+                    WHEN call_duration_seconds > 120 AND call_duration_seconds <= 180 THEN '120-180s'
+                    ELSE '>180s'
+                END AS range,
+                COUNT(*) as count
+            FROM call_transcripts
+            GROUP BY 
+                CASE 
+                    WHEN call_duration_seconds <= 10 THEN '0-10s'
+                    WHEN call_duration_seconds > 10 AND call_duration_seconds <= 30 THEN '10-30s'
+                    WHEN call_duration_seconds > 30 AND call_duration_seconds <= 60 THEN '30-60s'
+                    WHEN call_duration_seconds > 60 AND call_duration_seconds <= 120 THEN '60-120s'
+                    WHEN call_duration_seconds > 120 AND call_duration_seconds <= 180 THEN '120-180s'
+                    ELSE '>180s'
+                END
+        ''')
+        
+        # Ensure ordered manually in Python to guarantee correct sequence on chart!
+        order = {'0-10s': 1, '10-30s': 2, '30-60s': 3, '60-120s': 4, '120-180s': 5, '>180s': 6}
+        d_stats = sorted([dict(r) for r in duration_buckets], key=lambda x: order.get(x['range'], 99))
 
-@app.post("/api/knowledge/upload")
-async def upload_rag_document(file: UploadFile = File(...)):
+        return {
+            "total_runs": total_runs or 0,
+            "transfer_count": transfer_count or 0,
+            "dispositions": dispositions,
+            "duration_stats": d_stats
+        }
+
+from fastapi.responses import StreamingResponse
+import io
+import csv
+
+@app.get("/api/analytics/csv")
+async def download_csv(request: Request):
     """
-    Endpoint for Mobile App: Uploads a PDF/TXT document to update the AI's Knowledge Base (RAG).
-    This file is forwarded to the Dograh Server or processed into an internal Vector DB.
+    Downloads all database transcripts securely as a CSV file.
     """
-    return {
-        "status": "success",
-        "message": f"Document '{file.filename}' securely uploaded and vectorized for RAG context."
-    }
+    pool = getattr(request.app.state, "pool", None)
+    if not pool:
+        raise HTTPException(status_code=500, detail="Database not configured")
+        
+    async with pool.acquire() as conn:
+        records = await conn.fetch('SELECT * FROM call_transcripts')
+        
+    if not records:
+         raise HTTPException(status_code=404, detail="No data available")
+         
+    # Generate CSV in memory
+    stream = io.StringIO()
+    writer = csv.writer(stream)
+    
+    # Extract keys from first record
+    headers = list(records[0].keys())
+    writer.writerow(headers)
+    
+    for row in records:
+        writer.writerow([row[h] for h in headers])
+        
+    response = StreamingResponse(iter([stream.getvalue()]), media_type="text/csv")
+    response.headers["Content-Disposition"] = "attachment; filename=transcripts.csv"
+    return response
 
 @app.get("/health")
 def health_check():

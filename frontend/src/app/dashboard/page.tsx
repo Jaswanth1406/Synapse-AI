@@ -1,10 +1,17 @@
 'use client';
 
-import { useState, useRef } from 'react';
-import { Shield, Activity, Clock, Search, Bell, Settings, LayoutDashboard, AlertCircle, BookOpen, LogOut, Terminal, Database, Zap, UploadCloud, Server } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Shield, Activity, Clock, Search, Bell, Settings, LayoutDashboard, AlertCircle, BookOpen, LogOut, Terminal, Database, Zap, UploadCloud, Server, PieChart, Moon, Sun } from 'lucide-react';
+import { authClient } from '@/lib/auth-client';
+import { useRouter } from 'next/navigation';
+import AnalyticsView from './AnalyticsView';
 
 export default function Dashboard() {
-  const [activeView, setActiveView] = useState('dashboard');
+  const router = useRouter();
+  const { data: session, isPending } = authClient.useSession();
+  
+  const [activeView, setActiveView] = useState('analytics');
+  const [isDarkMode, setIsDarkMode] = useState(true);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isCalling, setIsCalling] = useState(false);
   const [callStatus, setCallStatus] = useState('Idle');
@@ -15,6 +22,12 @@ export default function Dashboard() {
   // Health State
   const [healthStatus, setHealthStatus] = useState<any>(null);
 
+  useEffect(() => {
+    if (!isPending && !session) {
+      router.push('/signin');
+    }
+  }, [session, isPending, router]);
+
   const handleCall = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!phoneNumber) return;
@@ -23,7 +36,8 @@ export default function Dashboard() {
     setCallStatus('Dispatched Agent to ' + phoneNumber + ' via Dograh AI...');
     
     try {
-      const response = await fetch('http://localhost:8000/api/calls/trigger', {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/calls/trigger`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -50,66 +64,46 @@ export default function Dashboard() {
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-
-      setUploadStatus('Uploading...');
-      const formData = new FormData();
-      formData.append('file', file);
-
-      try {
-          const response = await fetch('http://localhost:8000/api/knowledge/upload', {
-              method: 'POST',
-              body: formData
-          });
-          if (response.ok) {
-              const data = await response.json();
-              setUploadStatus(`Success: ${data.message}`);
-          } else {
-              setUploadStatus('Failed to upload file.');
-          }
-      } catch (err: any) {
-          setUploadStatus(`Error: ${err.message}`);
-      }
-  };
-
-  const checkHealth = async () => {
-      try {
-          const response = await fetch('http://localhost:8000/health');
-          if (response.ok) {
-              const data = await response.json();
-              setHealthStatus(data);
-          } else {
-              setHealthStatus({ error: 'Backend returned an error' });
-          }
-      } catch (err: any) {
-          setHealthStatus({ error: `Backend unavailable: ${err.message}` });
-      }
-  };
-
-  const NavItem = ({ id, icon: Icon, label }: { id: string, icon: any, label: string }) => {
-      const isActive = activeView === id;
-      return (
-        <button 
-            onClick={() => setActiveView(id)} 
-            style={{ 
-                display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 12px', 
-                background: isActive ? '#ecfdf5' : 'transparent', 
-                color: isActive ? '#059669' : '#64748b', 
-                borderRadius: '8px', fontWeight: isActive ? '600' : '500',
-                border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%', transition: 'all 0.2s'
-            }}
-            className="hover-lift"
-        >
+  const NavItem = ({ id, icon: Icon, label, href }: { id: string, icon: any, label: string, href?: string }) => {
+      const isActive = activeView === id && !href;
+      
+      const content = (
+          <>
             <Icon size={18} /> {label}
+          </>
+      );
+
+      const navStyle = { 
+          display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 12px', 
+          background: isActive ? '#ecfdf5' : 'transparent', 
+          color: isActive ? '#059669' : '#64748b', 
+          borderRadius: '8px', fontWeight: isActive ? '600' : 500,
+          border: 'none', cursor: 'pointer', textAlign: 'left' as const, width: '100%', 
+          transition: 'all 0.2s', textDecoration: 'none'
+      };
+
+      if (href) {
+          return <a href={href} target="_blank" rel="noopener noreferrer" style={navStyle} className="hover-lift">{content}</a>;
+      }
+
+      return (
+        <button onClick={() => setActiveView(id)} style={navStyle} className="hover-lift">
+            {content}
         </button>
       );
   };
 
+  if (isPending) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: '#f6fcfc', color: '#0f172a' }}>Verifying Session...</div>;
+  }
+  
+  if (!session) {
+    return null; // Don't render until redirected to signin
+  }
+
   return (
-    <div className="grid-dashboard" style={{ background: '#f6fcfc' }}>
-      <aside className="dashboard-sidebar" style={{ display: 'flex', flexDirection: 'column' }}>
+    <div className="grid-dashboard" style={{ background: isDarkMode ? '#09090b' : '#f6fcfc', transition: 'background 0.3s' }}>
+      <aside className="dashboard-sidebar" style={{ display: 'flex', flexDirection: 'column', background: isDarkMode ? '#18181b' : 'white', borderRight: `1px solid ${isDarkMode ? '#27272a' : '#e2e8f0'}` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2rem' }}>
           <div style={{ background: '#10b981', padding: '6px', borderRadius: '8px', color: 'white' }}>
             <Shield size={20} />
@@ -121,15 +115,13 @@ export default function Dashboard() {
         <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1 }}>
           <NavItem id="dashboard" icon={LayoutDashboard} label="Dashboard" />
           <NavItem id="trigger" icon={Activity} label="Trigger Call" />
-          <NavItem id="knowledge" icon={BookOpen} label="Knowledge Base" />
-          <NavItem id="health" icon={Server} label="System Health" />
         </nav>
       </aside>
 
       <main className="dashboard-main" style={{ maxWidth: '1400px', margin: '0 auto', width: '100%', padding: '32px 40px' }}>
         <header style={{ marginBottom: '2.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
-            <h1 className="animate-fade-in" style={{ fontSize: '2.2rem', marginBottom: '0.5rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.5px' }}>
+            <h1 className="animate-fade-in" style={{ fontSize: '2.2rem', marginBottom: '0.5rem', fontWeight: 800, color: isDarkMode ? 'white' : '#0f172a', letterSpacing: '-0.5px' }}>
               Welcome back, <span className="text-gradient">Agent</span>
             </h1>
             <p className="text-muted animate-fade-in delay-100" style={{ color: '#64748b', fontSize: '0.95rem', margin: 0 }}>
@@ -138,122 +130,52 @@ export default function Dashboard() {
           </div>
           
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-             <button className="btn-primary animate-fade-in delay-100" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.95rem', padding: '10px 24px', borderRadius: '999px' }}>
-               + New Campaign
+             <button 
+               onClick={() => setIsDarkMode(!isDarkMode)} 
+               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '36px', height: '36px', borderRadius: '50%', background: isDarkMode ? '#27272a' : '#f8fafc', color: isDarkMode ? '#f4f4f5' : '#334155', border: `1px solid ${isDarkMode ? '#3f3f46' : '#e2e8f0'}`, cursor: 'pointer', transition: 'all 0.2s', padding: 0 }} 
+               className="hover-lift" title="Toggle Theme"
+             >
+               {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
              </button>
+             
+             <a href="https://app.dograh.com/files" target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.95rem', padding: '10px 24px', borderRadius: '999px', background: isDarkMode ? '#27272a' : '#e2e8f0', color: isDarkMode ? '#f8fafc' : '#0f172a', textDecoration: 'none', fontWeight: '500', transition: 'all 0.2s' }} className="hover-lift">
+               <UploadCloud size={16} /> Knowledge Base
+             </a>
+             <a href="https://app.dograh.com/campaigns" target="_blank" rel="noopener noreferrer" className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.95rem', padding: '10px 24px', borderRadius: '999px', textDecoration: 'none' }}>
+               + New Campaign
+             </a>
              
              {/* Header User Profile & Logout */}
              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', borderLeft: '1px solid #e2e8f0', paddingLeft: '16px', marginLeft: '8px' }}>
                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                   <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#ffedd5', border: '2px solid white', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#c2410c', fontWeight: 'bold', fontSize: '1.1rem' }}>A</div>
+                   <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#ffedd5', border: '2px solid white', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#c2410c', fontWeight: 'bold', fontSize: '1.1rem' }}>
+                       {session?.user?.name ? session.user.name.charAt(0).toUpperCase() : 'U'}
+                   </div>
                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                       <span style={{ fontSize: '0.95rem', fontWeight: '600', color: '#1e293b', lineHeight: '1.2' }}>Agent Admin</span>
+                       <span style={{ fontSize: '0.95rem', fontWeight: '600', color: isDarkMode ? 'white' : '#1e293b', lineHeight: '1.2' }}>{session?.user?.name || 'User'}</span>
                        <span style={{ fontSize: '0.8rem', color: '#64748b' }}>Workspace Owner</span>
                    </div>
                </div>
                
-               <button onClick={() => window.location.href = '/'} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '36px', height: '36px', borderRadius: '50%', background: '#f8fafc', color: '#ef4444', border: '1px solid #e2e8f0', cursor: 'pointer', transition: 'all 0.2s', padding: 0 }} aria-label="Logout" className="hover-lift" title="Logout">
+               <button 
+                  onClick={async () => {
+                      await authClient.signOut();
+                      window.location.href = '/';
+                  }} 
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '36px', height: '36px', borderRadius: '50%', background: '#f8fafc', color: '#ef4444', border: '1px solid #e2e8f0', cursor: 'pointer', transition: 'all 0.2s', padding: 0 }} 
+                  aria-label="Logout" className="hover-lift" title="Logout"
+               >
                    <LogOut size={16} />
                </button>
              </div>
           </div>
         </header>
 
-        {activeView === 'dashboard' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '1.5rem' }}>
-          
-          {/* KPI Dashboard Metrics - Spans full row */}
-          <section style={{ gridColumn: 'span 12', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem', marginBottom: '0.5rem' }}>
-            <div className="glass-panel animate-fade-in delay-200" style={{ borderTop: '4px solid #3b82f6', padding: '20px' }}>
-              <h3 style={{ color: '#64748b', fontSize: '0.8rem', textTransform: 'uppercase', marginBottom: '0.5rem', fontWeight: 'bold' }}>Total Calls Made</h3>
-              <p style={{ fontSize: '2rem', fontWeight: '800', margin: 0, color: '#0f172a' }}>1,284</p>
-            </div>
-            <div className="glass-panel animate-fade-in delay-200" style={{ borderTop: '4px solid #10b981', padding: '20px' }}>
-              <h3 style={{ color: '#64748b', fontSize: '0.8rem', textTransform: 'uppercase', marginBottom: '0.5rem', fontWeight: 'bold' }}>Positive Intent Rate</h3>
-              <p style={{ fontSize: '2rem', fontWeight: '800', margin: 0, color: '#10b981' }}>42.8%</p>
-            </div>
-            <div className="glass-panel animate-fade-in delay-200" style={{ borderTop: '4px solid #f59e0b', padding: '20px' }}>
-              <h3 style={{ color: '#64748b', fontSize: '0.8rem', textTransform: 'uppercase', marginBottom: '0.5rem', fontWeight: 'bold' }}>Active Leads</h3>
-              <p style={{ fontSize: '2rem', fontWeight: '800', margin: 0, color: '#f59e0b' }}>312</p>
-            </div>
-          </section>
-
-          {/* Quick Actions / Activity Feed - Span 12 columns */}
-          <section className="glass-panel animate-fade-in delay-300" style={{ gridColumn: 'span 12', padding: '24px' }}>
-            <h2 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '1.5rem' }}>Recent Activity</h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <div style={{ marginTop: '2px', width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }}></div>
-                <div>
-                  <p style={{ fontSize: '0.9rem', fontWeight: '600', margin: 0, color: '#334155' }}>Call Completed</p>
-                  <p style={{ fontSize: '0.8rem', color: '#64748b', margin: 0 }}>+1 (555) 123-4567 • High Intent</p>
-                </div>
-              </div>
-              
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <div style={{ marginTop: '2px', width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }}></div>
-                <div>
-                  <p style={{ fontSize: '0.9rem', fontWeight: '600', margin: 0, color: '#334155' }}>Campaign Started</p>
-                  <p style={{ fontSize: '0.8rem', color: '#64748b', margin: 0 }}>Q2 Product Outreach</p>
-                </div>
-              </div>
-              
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <div style={{ marginTop: '2px', width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b' }}></div>
-                <div>
-                  <p style={{ fontSize: '0.9rem', fontWeight: '600', margin: 0, color: '#334155' }}>Follow-up Scheduled</p>
-                  <p style={{ fontSize: '0.8rem', color: '#64748b', margin: 0 }}>Sarah Jenkins @ Acme Corp</p>
-                </div>
-              </div>
-
-            </div>
-          </section>
-
-        </div>
-        
-        {/* Project Documentation Section */}
-        <section className="glass-panel animate-fade-in delay-300" style={{ padding: '2rem', marginTop: '1.5rem', marginBottom: '3rem' }}>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '1.5rem', color: '#0f172a', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Terminal size={20} className="text-primary"/> Project Documentation
-          </h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem' }}>
-              <div>
-                 <h3 style={{fontSize: '1.1rem', fontWeight: '600', color: '#334155', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px'}}><Zap size={16} color="#eab308" /> Key Features</h3>
-                 <ul style={{ paddingLeft: '1.2rem', color: '#475569', fontSize: '0.95rem', lineHeight: '1.6' }}>
-                   <li style={{marginBottom: '8px'}}><strong>Automated Call Triggering</strong>: Initiates calls using the Dograh Cloud via FastAPI.</li>
-                   <li style={{marginBottom: '8px'}}><strong>Real-Time Updates</strong>: Receives live statuses and call transcripts via ngrok-exposed webhooks.</li>
-                   <li style={{marginBottom: '8px'}}><strong>Scalable Database</strong>: Stores campaign and call logs with Neon Postgres and Prisma ORM.</li>
-                   <li style={{marginBottom: '8px'}}><strong>Modern Frontend</strong>: Next.js + React.js UI tailored for dashboard-style analytics and actions.</li>
-                 </ul>
-              </div>
-              <div>
-                 <h3 style={{fontSize: '1.1rem', fontWeight: '600', color: '#334155', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px'}}><Database size={16} color="#3b82f6" /> Tech Stack</h3>
-                 <ul style={{ paddingLeft: '1.2rem', color: '#475569', fontSize: '0.95rem', lineHeight: '1.6' }}>
-                   <li style={{marginBottom: '8px'}}><strong>Backend</strong>: Python, FastAPI (uvicorn)</li>
-                   <li style={{marginBottom: '8px'}}><strong>Frontend</strong>: Next.js, React, TailwindCSS</li>
-                   <li style={{marginBottom: '8px'}}><strong>Database</strong>: Neon (Serverless Postgres), Prisma</li>
-                   <li style={{marginBottom: '8px'}}><strong>Third-Party</strong>: Dograh Cloud APIs</li>
-                   <li style={{marginBottom: '8px'}}><strong>Tunneling</strong>: ngrok (for local webhook testing)</li>
-                 </ul>
-              </div>
-          </div>
-          
-           <div style={{ marginTop: '2rem' }}>
-              <h3 style={{fontSize: '1.1rem', fontWeight: '600', color: '#334155', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px'}}><Activity size={16} color="#10b981" /> Architecture Flow</h3>
-              <div style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                 <ol style={{ paddingLeft: '1.2rem', color: '#475569', fontSize: '0.95rem', lineHeight: '1.7', margin: 0 }}>
-                   <li style={{marginBottom: '12px'}}><strong>User Action</strong>: User submits phone number & task via Next.js frontend to FastAPI backend (`/api/calls/schedule`).</li>
-                   <li style={{marginBottom: '12px'}}><strong>API Trigger</strong>: FastAPI posts to `api.dograh.com/api/v1/public/agent/{'{id}'}` with agent credentials.</li>
-                   <li style={{marginBottom: '12px'}}><strong>Call Execution</strong>: Dograh AI dialer places the outbound call.</li>
-                   <li style={{marginBottom: '12px'}}><strong>Webhook Updates</strong>: Dograh sends real-time events (started, ringing, answered, ended, transcripts) to `POST /api/webhooks/dograh`.</li>
-                   <li style={{marginBottom: '12px'}}><strong>Data Storage</strong>: Webhook payloads are persisted to the Neon database via Prisma.</li>
-                 </ol>
-              </div>
+        {/* Primary Dashboard / Analytics View */}
+        {(activeView === 'dashboard' || activeView === 'analytics') && (
+           <div className="animate-fade-in delay-100">
+               <AnalyticsView isDarkMode={isDarkMode} />
            </div>
-        </section>
-        </div>
         )}
 
         {/* Trigger Call View */}
@@ -315,58 +237,7 @@ export default function Dashboard() {
           </section>
         )}
 
-        {/* Knowledge Base View */}
-        {activeView === 'knowledge' && (
-          <section className="glass-panel animate-fade-in delay-200" style={{ padding: '2rem' }}>
-             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '1.5rem' }}>
-              <div style={{ background: '#fef08a', padding: '6px', borderRadius: '8px', color: '#854d0e' }}>
-                <UploadCloud size={18} />
-              </div>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: '700', margin: 0 }}>RAG Knowledge Base</h2>
-            </div>
-            <p style={{ fontSize: '0.9rem', color: '#64748b', marginBottom: '1.5rem' }}>
-              Upload FAQs or scripts to build the Knowledge Base. <code>POST /api/knowledge/upload</code>
-            </p>
-            <div style={{ background: '#f8fafc', padding: '2rem', borderRadius: '12px', border: '2px dashed #cbd5e1', textAlign: 'center', maxWidth: '600px' }}>
-                <UploadCloud size={40} color="#94a3b8" style={{ margin: '0 auto 1rem auto' }}/>
-                <h3 style={{ fontSize: '1rem', color: '#334155', marginBottom: '0.5rem' }}>Select a PDF or TXT file</h3>
-                <input 
-                  type="file" 
-                  onChange={handleFileUpload} 
-                  style={{ marginTop: '1rem' }} 
-                  accept=".txt,.pdf"
-                />
-                
-                {uploadStatus && (
-                    <div style={{ marginTop: '1.5rem', fontSize: '0.9rem', color: '#059669', background: '#ecfdf5', padding: '8px', borderRadius: '4px' }}>
-                        {uploadStatus}
-                    </div>
-                )}
-            </div>
-          </section>
-        )}
 
-        {/* System Health View */}
-        {activeView === 'health' && (
-          <section className="glass-panel animate-fade-in delay-200" style={{ padding: '2rem' }}>
-             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '1.5rem' }}>
-              <div style={{ background: '#e0f2fe', padding: '6px', borderRadius: '8px', color: '#0284c7' }}>
-                <Server size={18} />
-              </div>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: '700', margin: 0 }}>Backend System Health</h2>
-            </div>
-            
-            <button onClick={checkHealth} className="btn-secondary" style={{ padding: '10px 20px', borderRadius: '8px', marginBottom: '1rem' }}>
-               Ping API (/health)
-            </button>
-
-            {healthStatus && (
-                <div style={{ background: '#1e293b', padding: '1.5rem', borderRadius: '8px', color: '#f8fafc', fontFamily: 'monospace', maxWidth: '600px', whiteSpace: 'pre-wrap' }}>
-                    {JSON.stringify(healthStatus, null, 2)}
-                </div>
-            )}
-          </section>
-        )}
 
       </main>
     </div>

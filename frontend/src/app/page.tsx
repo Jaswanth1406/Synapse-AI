@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowRight, Shield, Activity, Clock, ShieldCheck, Zap } from 'lucide-react';
+import { ArrowRight, Shield, Activity, Clock, ShieldCheck, Zap, Terminal, Database } from 'lucide-react';
 import Link from 'next/link';
 
 export default function Home() {
@@ -19,13 +19,13 @@ export default function Home() {
         <nav style={{ display: 'flex', gap: '32px' }}>
           <a href="#" style={{ color: '#64748b', fontWeight: '500', transition: 'color 0.2s', fontSize: '0.95rem', textDecoration: 'none' }}>Features</a>
           <a href="#dashboard-preview" style={{ color: '#64748b', fontWeight: '500', transition: 'color 0.2s', fontSize: '0.95rem', textDecoration: 'none' }}>Dashboard</a>
-          <a href="#" style={{ color: '#64748b', fontWeight: '500', transition: 'color 0.2s', fontSize: '0.95rem', textDecoration: 'none' }}>How it Works</a>
-          <a href="#" style={{ color: '#64748b', fontWeight: '500', transition: 'color 0.2s', fontSize: '0.95rem', textDecoration: 'none' }}>Capabilities</a>
+          <a href="#how-it-works" style={{ color: '#64748b', fontWeight: '500', transition: 'color 0.2s', fontSize: '0.95rem', textDecoration: 'none' }}>How it Works</a>
+          <a href="#capabilities" style={{ color: '#64748b', fontWeight: '500', transition: 'color 0.2s', fontSize: '0.95rem', textDecoration: 'none' }}>Capabilities</a>
         </nav>
         
         <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
           <Link href="/signin" style={{ color: '#0f172a', fontWeight: '600', fontSize: '0.95rem', textDecoration: 'none' }}>Sign In</Link>
-          <Link href="/dashboard" className="btn-primary" style={{ textDecoration: 'none' }}>Get Started</Link>
+          <Link href="/signup" className="btn-primary" style={{ textDecoration: 'none' }}>Sign Up</Link>
         </div>
       </header>
 
@@ -49,11 +49,8 @@ export default function Home() {
           Synapse AI learns your campaign objectives, communicates naturally, engages leads seamlessly, and converts prospects automatically before a human even has to react.
         </p>
 
-        <div style={{ display: 'flex', gap: '24px', marginBottom: '4rem' }}>
-          <Link href="/dashboard" className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '16px 32px', fontSize: '1.1rem', textDecoration: 'none' }}>
-            <Activity size={20} /> Deploy AI Agent <ArrowRight size={20} />
-          </Link>
-          <Link href="/signin" className="btn-outline" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '16px 32px', fontSize: '1.1rem', textDecoration: 'none', background: 'transparent' }}>
+        <div style={{ display: 'flex', gap: '24px', marginBottom: '4rem', justifyContent: 'center' }}>
+          <Link href="/signin" className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '16px 32px', fontSize: '1.1rem', textDecoration: 'none' }}>
             <ShieldCheck size={20} /> Sign In to Platform
           </Link>
         </div>
@@ -95,6 +92,59 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      {/* How it Works Section */}
+      <section id="how-it-works" style={{ width: '100%', maxWidth: '1000px', marginTop: '6rem', paddingTop: '4rem', paddingBottom: '2rem', textAlign: 'center' }}>
+          <h2 style={{ fontSize: '2.5rem', fontWeight: '800', marginBottom: '1rem', color: '#0f172a' }}>How It Works</h2>
+          <p style={{ color: '#64748b', marginBottom: '3rem', fontSize: '1.1rem', maxWidth: '600px', margin: '0 auto 3rem auto' }}>Our AI agent handles the entire lifecycle of an outbound prospect call.</p>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '32px', textAlign: 'left' }}>
+              <div style={{ background: 'white', padding: '32px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.02)' }}>
+                  <div style={{ background: '#ecfdf5', width: '48px', height: '48px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '24px', color: '#10b981', fontWeight: 'bold', fontSize: '1.5rem' }}>1</div>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '12px', color: '#1e293b' }}>Trigger Webhook</h3>
+                  <p style={{ color: '#64748b', lineHeight: 1.6 }}>Send a lead's info via our API or Dashboard to instantly dispatch a call using Dograh AI infrastructure.</p>
+              </div>
+              <div style={{ background: 'white', padding: '32px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.02)' }}>
+                  <div style={{ background: '#ecfdf5', width: '48px', height: '48px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '24px', color: '#10b981', fontWeight: 'bold', fontSize: '1.5rem' }}>2</div>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '12px', color: '#1e293b' }}>AI Conversation</h3>
+                  <p style={{ color: '#64748b', lineHeight: 1.6 }}>The agent holds a natural, ultra-low latency conversation, answering questions and handling objections dynamically.</p>
+              </div>
+              <div style={{ background: 'white', padding: '32px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.02)' }}>
+                  <div style={{ background: '#ecfdf5', width: '48px', height: '48px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '24px', color: '#10b981', fontWeight: 'bold', fontSize: '1.5rem' }}>3</div>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '12px', color: '#1e293b' }}>Analytics Sync</h3>
+                  <p style={{ color: '#64748b', lineHeight: 1.6 }}>Variables like Sentiment, Intent, and Budget are extracted and synced securely to your Neon PostgreSQL database.</p>
+              </div>
+          </div>
+      </section>
+
+      {/* Capabilities Section */}
+      <section id="capabilities" style={{ width: '100%', maxWidth: '1000px', marginTop: '6rem', paddingTop: '4rem', paddingBottom: '6rem', textAlign: 'center' }}>
+          <h2 style={{ fontSize: '2.5rem', fontWeight: '800', marginBottom: '1rem', color: '#0f172a' }}>Capabilities</h2>
+          <p style={{ color: '#64748b', marginBottom: '3rem', fontSize: '1.1rem', maxWidth: '600px', margin: '0 auto 3rem auto' }}>Built for scale and customized for rigorous enterprise environments.</p>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', textAlign: 'left' }}>
+              <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                  <Activity size={24} style={{ color: '#10b981' }} />
+                  <div><strong style={{ display: 'block', color: '#1e293b' }}>Real-time Dashboarding</strong><span style={{ fontSize: '0.9rem', color: '#64748b' }}>Monitor calls actively.</span></div>
+              </div>
+              <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                  <Shield style={{ color: '#10b981' }} />
+                  <div><strong style={{ display: 'block', color: '#1e293b' }}>Secure Webhooks</strong><span style={{ fontSize: '0.9rem', color: '#64748b' }}>Bank-grade encryption endpoint.</span></div>
+              </div>
+              <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                  <Database style={{ color: '#10b981' }} />
+                  <div><strong style={{ display: 'block', color: '#1e293b' }}>Neon Serverless DB</strong><span style={{ fontSize: '0.9rem', color: '#64748b' }}>Infinite scaling for transcripts.</span></div>
+              </div>
+              <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                  <Terminal style={{ color: '#10b981' }} />
+                  <div><strong style={{ display: 'block', color: '#1e293b' }}>Extensive APIs</strong><span style={{ fontSize: '0.9rem', color: '#64748b' }}>RESTful endpoints for custom CRM.</span></div>
+              </div>
+          </div>
+      </section>
+      
+      <style dangerouslySetInnerHTML={{__html: `
+        html { scroll-behavior: smooth; }
+      `}} />
     </div>
   );
 }
