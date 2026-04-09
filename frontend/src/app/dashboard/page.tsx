@@ -20,19 +20,16 @@ export default function Dashboard() {
     if (!phoneNumber) return;
 
     setIsCalling(true);
-    setCallStatus('Scheduling Call to ' + phoneNumber + ' via Backend...');
+    setCallStatus('Dispatched Agent to ' + phoneNumber + ' via Dograh AI...');
     
     try {
-      const response = await fetch('http://localhost:8000/api/calls/schedule', {
+      const response = await fetch('http://localhost:8000/api/calls/trigger', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ 
-            phone_number: phoneNumber, 
-            scheduled_time: new Date().toISOString(),
-            language: 'english',
-            retry_count: 3
+            phone_number: phoneNumber
         })
       });
       

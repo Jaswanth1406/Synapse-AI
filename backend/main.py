@@ -1,21 +1,95 @@
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import Response
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 from pydantic import BaseModel
 import httpx
 import os
+import asyncpg
 from dotenv import load_dotenv
 load_dotenv("../frontend/.env") 
 from twilio.rest import Client
 from crm_connector import push_unified_event, map_lead_status
 
-app = FastAPI(title="Vedaspark AI - Python Backend")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize connection pool to Neon DB
+    db_url = os.environ.get("DATABASE_URL")
+    if db_url:
+        print("Connecting to Neon Database...")
+        app.state.pool = await asyncpg.create_pool(db_url)
+        # Create Call Transcripts table automatically if missing
+        async with app.state.pool.acquire() as conn:
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS call_transcripts (
+                    id SERIAL PRIMARY KEY,
+                    call_id TEXT UNIQUE,
+                    contact_id TEXT,
+                    phone_number TEXT,
+                    status TEXT,
+                    intent TEXT,
+                    transcript TEXT,
+                    caller_name TEXT,
+                    company_name TEXT,
+                    designation TEXT,
+                    email_provided TEXT,
+                    callback_requested BOOLEAN,
+                    callback_time TEXT,
+                    language_spoken TEXT,
+                    sentiment TEXT,
+                    call_outcome TEXT,
+                    objection_raised BOOLEAN,
+                    objection_detail TEXT,
+                    product_interest TEXT,
+                    budget_mentioned BOOLEAN,
+                    budget_range TEXT,
+                    urgency_level TEXT,
+                    decision_maker BOOLEAN,
+                    competitor_mentioned TEXT,
+                    pain_point TEXT,
+                    next_step TEXT,
+                    meeting_date TEXT,
+                    call_duration_seconds INTEGER,
+                    questions_asked TEXT,
+                    referral_source TEXT,
+                    do_not_call BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            ''')
+        print("Neon Database ready and tables verified.")
+    else:
+        app.state.pool = None
+        print("WARNING: DATABASE_URL not found, DB storage disabled.")
+    
+    yield
+    
+    # Shutdown gracefully
+    if getattr(app.state, "pool", None):
+        await app.state.pool.close()
 
-class DograhWebhookPayload(BaseModel):
-    call_id: str
-    status: str
-    transcript: str | None = None
-    intent: str | None = None
-    contact_id: str | None = None
+# Forcing auto-reload to recreate Neon DB tables
+app = FastAPI(title="Vedaspark AI - Python Backend", lifespan=lifespan)
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    body = await request.body()
+    print("=== 422 VALIDATION ERROR ===")
+    print(f"Error Details: {exc.errors()}")
+    print(f"Raw Webhook Body: {body.decode()}")
+    print("============================")
+    return Response(status_code=422, content=str(exc))
+
+# Allow Next.js frontend to make requests without browser CORS errors
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Removed DograhWebhookPayload to prevent strict 422 validation errors. We will parse it manually.
 
 class ScheduleCallPayload(BaseModel):
     phone_number: str
@@ -25,26 +99,109 @@ class ScheduleCallPayload(BaseModel):
 
 # A simple POST endpoint for Dograh AI to send call completion webhooks
 @app.post("/api/webhooks/dograh")
-async def handle_dograh_webhook(payload: DograhWebhookPayload):
-    # This endpoint receives the completed call data from Dograh Cloud
-    print(f"Received Webhook from Dograh for call: {payload.call_id}")
-    print(f"Status: {payload.status}")
-    print(f"Transcript Snippet: {payload.transcript[:50] if payload.transcript else 'N/A'}")
+async def handle_dograh_webhook(request: Request):
+    # Dynamically accept ANY JSON Dograh sends so we never crash with 422
+    payload = await request.json()
+    call_id = str(payload.get("call_id", "unknown_id"))
+    status = payload.get("status", "completed")
     
-    # Analyze intent if not provided
-    intent = payload.intent or _analyze_intent(payload.transcript)
+    print(f"Received Webhook from Dograh for call: {call_id}")
     
-    # Map internal status to ESPO CRM status using crm_connector
-    internal_status = f"CALL_{intent.upper()}"
-    espo_status = map_lead_status(internal_status)
+    # Dograh sends URLs instead of text! We must download the transcript!
+    transcript_text = "No transcript generated."
+    transcript_url = payload.get("transcript_url")
+    if transcript_url:
+        try:
+            api_key = os.environ.get("NEXT_PUBLIC_DOGRAH_API_KEY", "")
+            async with httpx.AsyncClient() as client:
+                t_resp = await client.get(transcript_url, headers={"X-API-Key": api_key}, follow_redirects=True)
+                if t_resp.status_code == 200:
+                    transcript_text = t_resp.text
+                else:
+                    print(f"Failed to download transcript! Status: {t_resp.status_code}, Response: {t_resp.text}")
+        except Exception as e:
+            print(f"Warning: Failed to fetch transcript from Dograh URL: {e}")
+            
+    print(f"Transcript Snippet: {transcript_text[:50]}...")
+            
+    # Extract Custom Extracted Variables safely
+    intent = payload.get("intent", "unknown")
+    contact_id = payload.get("contact_id")
+    
+    pool = getattr(request.app.state, "pool", None)
+    if pool:
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute('''
+                    INSERT INTO call_transcripts (
+                        call_id, contact_id, phone_number, status, intent, transcript,
+                        caller_name, company_name, designation, email_provided,
+                        callback_requested, callback_time, language_spoken, sentiment,
+                        call_outcome, objection_raised, objection_detail, product_interest,
+                        budget_mentioned, budget_range, urgency_level, decision_maker,
+                        competitor_mentioned, pain_point, next_step, meeting_date,
+                        call_duration_seconds, questions_asked, referral_source, do_not_call
+                    )
+                    VALUES (
+                        $1, $2, $3, $4, $5, $6,
+                        $7, $8, $9, $10,
+                        $11, $12, $13, $14,
+                        $15, $16, $17, $18,
+                        $19, $20, $21, $22,
+                        $23, $24, $25, $26,
+                        $27, $28, $29, $30
+                    )
+                    ON CONFLICT (call_id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        intent = EXCLUDED.intent,
+                        transcript = EXCLUDED.transcript,
+                        caller_name = EXCLUDED.caller_name,
+                        company_name = EXCLUDED.company_name,
+                        designation = EXCLUDED.designation,
+                        email_provided = EXCLUDED.email_provided,
+                        callback_requested = EXCLUDED.callback_requested,
+                        callback_time = EXCLUDED.callback_time,
+                        language_spoken = EXCLUDED.language_spoken,
+                        sentiment = EXCLUDED.sentiment,
+                        call_outcome = EXCLUDED.call_outcome,
+                        objection_raised = EXCLUDED.objection_raised,
+                        objection_detail = EXCLUDED.objection_detail,
+                        product_interest = EXCLUDED.product_interest,
+                        budget_mentioned = EXCLUDED.budget_mentioned,
+                        budget_range = EXCLUDED.budget_range,
+                        urgency_level = EXCLUDED.urgency_level,
+                        decision_maker = EXCLUDED.decision_maker,
+                        competitor_mentioned = EXCLUDED.competitor_mentioned,
+                        pain_point = EXCLUDED.pain_point,
+                        next_step = EXCLUDED.next_step,
+                        meeting_date = EXCLUDED.meeting_date,
+                        call_duration_seconds = EXCLUDED.call_duration_seconds,
+                        questions_asked = EXCLUDED.questions_asked,
+                        referral_source = EXCLUDED.referral_source,
+                        do_not_call = EXCLUDED.do_not_call
+                ''',
+                call_id, contact_id, payload.get("phone_number"), status, intent, transcript_text,
+                payload.get("caller_name"), payload.get("company_name"), payload.get("designation"), payload.get("email_provided"),
+                str(payload.get("callback_requested")).lower() == 'true', payload.get("callback_time"), payload.get("language_spoken"), payload.get("sentiment"),
+                payload.get("call_outcome"), str(payload.get("objection_raised")).lower() == 'true', payload.get("objection_detail"), payload.get("product_interest"),
+                str(payload.get("budget_mentioned")).lower() == 'true', payload.get("budget_range"), payload.get("urgency_level"), str(payload.get("decision_maker")).lower() == 'true',
+                payload.get("competitor_mentioned"), payload.get("pain_point"), payload.get("next_step"), payload.get("meeting_date"),
+                int(payload.get("duration", 0) or 0), payload.get("questions_asked"), payload.get("referral_source"), str(payload.get("do_not_call")).lower() == 'true'
+                )
+            print("Successfully stored transcript in Neon Database.")
+        except Exception as e:
+            print(f"Neon DB Error: Failed to save transcript - {e}")
 
-    if payload.contact_id:
+    # Map internal status to ESPO CRM status using crm_connector
+    if contact_id:
+        internal_status = f"CALL_{intent.upper()}"
+        espo_status = map_lead_status(internal_status)
         update_data = {
-            "description": payload.transcript,
+            "description": transcript_text,
             "status": espo_status
         }
         await push_unified_event(
-            lead={"id": payload.contact_id},
+            lead={"id": contact_id},
             event_type="LEAD_UPDATE",
             data=update_data
         )
@@ -96,53 +253,62 @@ async def upload_rag_document(file: UploadFile = File(...)):
 def health_check():
     return {"status": "ok", "service": "Vedaspark AI Orchestrator"}
 
-class TwilioCallPayload(BaseModel):
+class TriggerCallPayload(BaseModel):
     phone_number: str
 
-@app.post("/api/calls/twilio/initiate")
-async def initiate_twilio_call(payload: TwilioCallPayload):
-    account_sid = os.environ.get("TWILIO_SID")
-    auth_token = os.environ.get("TWILIO_AUTH")
-    from_number = os.environ.get("TWILIO_PHONE", "+1234567890")
-    backend_url = os.environ.get("BACKEND_PUBLIC_URL", "http://localhost:8000")
+@app.post("/api/calls/trigger")
+async def trigger_call(payload: TriggerCallPayload, request: Request):
+    """
+    Endpoint for Dashboard: Hits the Dograh AI API directly to trigger a call.
+    Since Dograh has Twilio configured in its own dashboard, it handles the dialing!
+    """
+    api_key = os.environ.get("NEXT_PUBLIC_DOGRAH_API_KEY")
+    agent_id = os.environ.get("DOGRAH_AGENT_ID", "af96de66-753e-4201-b166-ce5eccab3951")
     
-    if not account_sid or not auth_token:
-        raise HTTPException(status_code=500, detail="Twilio credentials not configured")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Dograh credentials not configured in .env")
         
     try:
-        twiml_url = f"{backend_url}/api/webhooks/twilio/twiml"
+        dograh_url = f"https://api.dograh.com/api/v1/public/agent/{agent_id}"
         
-        client = Client(account_sid, auth_token)
-        call = client.calls.create(
-            to=payload.phone_number,
-            from_=from_number,
-            url=twiml_url
-        )
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                dograh_url,
+                headers={
+                    "X-API-Key": api_key,
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "phone_number": payload.phone_number,
+                    "initial_context": {}
+                }
+            )
             
-        return {"status": "success", "message": "Call initiated", "call_sid": call.sid}
+            response.raise_for_status()
+            data = response.json()
+            print(f"Dograh API Response: {data}")
+            
+            # Extract the actual ID Dograh uses
+            call_id = str(data.get("workflow_run_id") or data.get("call_id") or data.get("id") or "unknown_id")
+            
+            # Immediately log to Database as "queued"
+            pool = getattr(request.app.state, "pool", None)
+            if pool:
+                try:
+                    async with pool.acquire() as conn:
+                        await conn.execute('''
+                            INSERT INTO call_transcripts (call_id, status, intent, transcript)
+                            VALUES ($1, $2, $3, $4)
+                            ON CONFLICT (call_id) DO NOTHING
+                        ''', call_id, "queued", "pending", "Call initiating...")
+                except Exception as db_err:
+                    print(f"Warning: Could not save initial trigger to Neon: {db_err}")
+            
+        return {"status": "success", "message": "Dograh Agent deployed successfully!", "call_data": data}
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Dograh API Error: {e.response.text}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.api_route("/api/webhooks/twilio/twiml", methods=["GET", "POST"])
-async def twilio_twiml_webhook(request: Request):
-    """
-    Webhook that Twilio hits when the call connects.
-    Returns TwiML to stream the audio directly to the Dograh AI Voice Engine.
-    """
-    # Fetch Dograh Agent ID securely loaded from .env
-    agent_id = os.environ.get("DOGRAH_AGENT_ID", "default_agent_id")
-    
-    # Configure the WebSocket URL based on Dograh's standard API format
-    # Ensure this domain matches your Dograh AI instance (e.g. wss://api.dograh.com/v1/...)
-    dograh_ws_url = f"wss://api.dograh.com/v1/calls/twilio/stream/{agent_id}"
-
-    twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Connect>
-        <Stream url="{dograh_ws_url}" />
-    </Connect>
-</Response>'''
-    return Response(content=twiml, media_type="text/xml")
 
 
 if __name__ == "__main__":

@@ -6,3 +6,4 @@ requests
 twilio
 python-dotenv
 python-multipart
+asyncpg
