@@ -76,6 +76,10 @@ Return ONLY the JSON. No markdown, no explanation.
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Load env from current dir or frontend dir for local dev
+    load_dotenv() 
+    load_dotenv("../frontend/.env")
+    
     # Initialize connection pool to Neon DB
     db_url = os.environ.get("DATABASE_URL")
     if db_url:
@@ -1097,4 +1101,5 @@ async def list_crm_contacts() -> list[dict]:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
