@@ -404,8 +404,8 @@ def _analyze_intent(transcript: str | None) -> str:
 
 
 
-RETRY_DELAY_SECONDS = 60  # Wait 60s between automatic retries
-SHORT_CALL_THRESHOLD_SECONDS = 12  # Calls shorter than this are treated as "cut"
+RETRY_DELAY_SECONDS = 15  # Wait 15s between automatic retries (Lowered for demo)
+SHORT_CALL_THRESHOLD_SECONDS = 8  # Calls shorter than this are treated as "cut" (Lowered for demo)
 
 async def _trigger_one_call(phone_number: str, language: str, lead_name: str, use_webhook: bool, webhook_url: str, api_key: str, agent_id: str) -> str:
     """Fires a single call. Returns call_id on success, raises on failure."""
