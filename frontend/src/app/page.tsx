@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowRight, Shield, Activity, Clock, ShieldCheck, Zap, Terminal, Database } from 'lucide-react';
+import { ArrowRight, Shield, Activity, Clock, ShieldCheck, Zap, Terminal, Database, Download } from 'lucide-react';
 import Link from 'next/link';
 
 export default function Home() {
@@ -63,7 +63,10 @@ export default function Home() {
             <ShieldCheck size={16} style={{ color: '#10b981' }} /> Human-like Flow
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'white', padding: '10px 20px', borderRadius: '999px', border: '1px solid #e2e8f0', color: '#334155', fontWeight: '600', fontSize: '0.9rem', boxShadow: '0 4px 6px rgba(0,0,0,0.02)' }}>
-            <Activity size={16} style={{ color: '#10b981' }} /> 24/7 Availability
+            <Activity size={16} style={{ color: '#10b981' }} /> Real-time Analytics
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'white', padding: '10px 20px', borderRadius: '999px', border: '1px solid #e2e8f0', color: '#334155', fontWeight: '600', fontSize: '0.9rem', boxShadow: '0 4px 6px rgba(0,0,0,0.02)' }}>
+            <Database size={16} style={{ color: '#10b981' }} /> Neon Postgres
           </div>
         </div>
       </main>
@@ -101,18 +104,18 @@ export default function Home() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '32px', textAlign: 'left' }}>
               <div style={{ background: 'white', padding: '32px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.02)' }}>
                   <div style={{ background: '#ecfdf5', width: '48px', height: '48px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '24px', color: '#10b981', fontWeight: 'bold', fontSize: '1.5rem' }}>1</div>
-                  <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '12px', color: '#1e293b' }}>Trigger Webhook</h3>
-                  <p style={{ color: '#64748b', lineHeight: 1.6 }}>Send a lead's info via our API or Dashboard to instantly dispatch a call using Dograh AI infrastructure.</p>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '12px', color: '#1e293b' }}>Smart Dispatch</h3>
+                  <p style={{ color: '#64748b', lineHeight: 1.6 }}>Instantly trigger calls or schedule them with intelligent retry logic and automatic server-restart recovery.</p>
               </div>
               <div style={{ background: 'white', padding: '32px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.02)' }}>
                   <div style={{ background: '#ecfdf5', width: '48px', height: '48px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '24px', color: '#10b981', fontWeight: 'bold', fontSize: '1.5rem' }}>2</div>
-                  <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '12px', color: '#1e293b' }}>AI Conversation</h3>
-                  <p style={{ color: '#64748b', lineHeight: 1.6 }}>The agent holds a natural, ultra-low latency conversation, answering questions and handling objections dynamically.</p>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '12px', color: '#1e293b' }}>Groq AI Analysis</h3>
+                  <p style={{ color: '#64748b', lineHeight: 1.6 }}>Our deep-learning engine extracts Sentiment, Intent, and Lead Quality (Hot/Warm/Cold) from every conversation.</p>
               </div>
               <div style={{ background: 'white', padding: '32px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.02)' }}>
                   <div style={{ background: '#ecfdf5', width: '48px', height: '48px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '24px', color: '#10b981', fontWeight: 'bold', fontSize: '1.5rem' }}>3</div>
-                  <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '12px', color: '#1e293b' }}>Analytics Sync</h3>
-                  <p style={{ color: '#64748b', lineHeight: 1.6 }}>Variables like Sentiment, Intent, and Budget are extracted and synced securely to your Neon PostgreSQL database.</p>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '12px', color: '#1e293b' }}>Universal Sync</h3>
+                  <p style={{ color: '#64748b', lineHeight: 1.6 }}>Download recordings, export CSV reports, and sync lead status directly to EspoCRM for immediate human follow-up.</p>
               </div>
           </div>
       </section>
@@ -122,22 +125,30 @@ export default function Home() {
           <h2 style={{ fontSize: '2.5rem', fontWeight: '800', marginBottom: '1rem', color: '#0f172a' }}>Capabilities</h2>
           <p style={{ color: '#64748b', marginBottom: '3rem', fontSize: '1.1rem', maxWidth: '600px', margin: '0 auto 3rem auto' }}>Built for scale and customized for rigorous enterprise environments.</p>
           
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', textAlign: 'left' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', textAlign: 'left' }}>
               <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '16px' }}>
                   <Activity size={24} style={{ color: '#10b981' }} />
-                  <div><strong style={{ display: 'block', color: '#1e293b' }}>Real-time Dashboarding</strong><span style={{ fontSize: '0.9rem', color: '#64748b' }}>Monitor calls actively.</span></div>
+                  <div><strong style={{ display: 'block', color: '#1e293b' }}>Groq AI Intelligence</strong><span style={{ fontSize: '0.9rem', color: '#64748b' }}>Sentiment & Intent analysis.</span></div>
               </div>
               <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <Shield style={{ color: '#10b981' }} />
-                  <div><strong style={{ display: 'block', color: '#1e293b' }}>Secure Webhooks</strong><span style={{ fontSize: '0.9rem', color: '#64748b' }}>Bank-grade encryption endpoint.</span></div>
+                  <ShieldCheck size={24} style={{ color: '#10b981' }} />
+                  <div><strong style={{ display: 'block', color: '#1e293b' }}>Multi-User Isolation</strong><span style={{ fontSize: '0.9rem', color: '#64748b' }}>Secure multi-tenant data.</span></div>
               </div>
               <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <Database style={{ color: '#10b981' }} />
-                  <div><strong style={{ display: 'block', color: '#1e293b' }}>Neon Serverless DB</strong><span style={{ fontSize: '0.9rem', color: '#64748b' }}>Infinite scaling for transcripts.</span></div>
+                  <Database size={24} style={{ color: '#10b981' }} />
+                  <div><strong style={{ display: 'block', color: '#1e293b' }}>Neon Serverless DB</strong><span style={{ fontSize: '0.9rem', color: '#64748b' }}>High-performance Postgres.</span></div>
               </div>
               <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <Terminal style={{ color: '#10b981' }} />
-                  <div><strong style={{ display: 'block', color: '#1e293b' }}>Extensive APIs</strong><span style={{ fontSize: '0.9rem', color: '#64748b' }}>RESTful endpoints for custom CRM.</span></div>
+                  <Clock size={24} style={{ color: '#10b981' }} />
+                  <div><strong style={{ display: 'block', color: '#1e293b' }}>Smart Scheduling</strong><span style={{ fontSize: '0.9rem', color: '#64748b' }}>Recovery & retry logic.</span></div>
+              </div>
+              <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                  <Download size={24} style={{ color: '#10b981' }} />
+                  <div><strong style={{ display: 'block', color: '#1e293b' }}>Call Recordings</strong><span style={{ fontSize: '0.9rem', color: '#64748b' }}>Download audio transcripts.</span></div>
+              </div>
+              <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                  <Zap size={24} style={{ color: '#10b981' }} />
+                  <div><strong style={{ display: 'block', color: '#1e293b' }}>EspoCRM Sync</strong><span style={{ fontSize: '0.9rem', color: '#64748b' }}>One-click lead conversion.</span></div>
               </div>
           </div>
       </section>
