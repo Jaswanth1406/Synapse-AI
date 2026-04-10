@@ -25,11 +25,21 @@ export default function Dashboard() {
   const [isScheduling, setIsScheduling] = useState(false);
   const [schedStatus, setSchedStatus] = useState('');
 
+  // Helper to get effective User ID (URL param override or session)
+  const getEffectiveUserId = () => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const override = params.get('user_id');
+      if (override) return override;
+    }
+    return session?.user?.id || 'anonymous';
+  };
+
   const fetchScheduledCalls = async () => {
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const res = await fetch(`${apiUrl}/api/calls/scheduled`, {
-        headers: { 'X-User-ID': session?.user?.id || 'anonymous' }
+        headers: { 'X-User-ID': getEffectiveUserId() }
       });
       if (res.ok) setScheduledCalls(await res.json());
     } catch {}
@@ -46,7 +56,7 @@ export default function Dashboard() {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'X-User-ID': session?.user?.id || 'anonymous'
+          'X-User-ID': getEffectiveUserId()
         },
         body: JSON.stringify({ phone_number: schedPhone, scheduled_time: schedTime, retry_count: schedRetryCount })
       });
@@ -71,7 +81,7 @@ export default function Dashboard() {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
     await fetch(`${apiUrl}/api/calls/scheduled/${id}`, { 
       method: 'DELETE',
-      headers: { 'X-User-ID': session?.user?.id || 'anonymous' }
+      headers: { 'X-User-ID': getEffectiveUserId() }
     });
     fetchScheduledCalls();
   };
@@ -111,7 +121,7 @@ export default function Dashboard() {
               method: 'POST',
               headers: { 
                   'Content-Type': 'application/json',
-                  'X-User-ID': session?.user?.id || 'anonymous'
+                  'X-User-ID': getEffectiveUserId()
               },
               body: JSON.stringify({ leads: payloadLeads })
           });
@@ -151,11 +161,18 @@ export default function Dashboard() {
           for (let i = 1; i < lines.length; i++) {
               const columns = lines[i].split(',');
               if (columns.length >= 3) {
-                  uploadedLeads.push({
-                      firstName: columns[0].trim(),
-                      lastName: columns[1].trim(),
-                      phoneNumber: columns[2].trim()
-                  });
+                  const firstName = columns[0].trim();
+                  const lastName = columns[1].trim();
+                  const phoneNumber = columns[2].trim();
+                  
+                  // Only add if at least a phone number is present
+                  if (phoneNumber) {
+                      uploadedLeads.push({
+                          firstName: firstName || 'Unknown',
+                          lastName: lastName,
+                          phoneNumber: phoneNumber
+                      });
+                  }
               }
           }
           
@@ -183,7 +200,7 @@ export default function Dashboard() {
         try {
           const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
           const response = await fetch(`${apiUrl}/api/calls/history`, {
-              headers: { 'X-User-ID': session?.user?.id || 'anonymous' }
+              headers: { 'X-User-ID': getEffectiveUserId() }
           });
           if (response.ok) {
              const data = await response.json();
@@ -222,7 +239,7 @@ export default function Dashboard() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-User-ID': session?.user?.id || 'anonymous'
+          'X-User-ID': getEffectiveUserId()
         },
         body: JSON.stringify({ 
             phone_number: phoneNumber,
@@ -359,7 +376,7 @@ export default function Dashboard() {
         {/* Primary Dashboard / Analytics View */}
         {(activeView === 'dashboard' || activeView === 'analytics') && (
            <div className="animate-fade-in delay-100">
-               <AnalyticsView isDarkMode={isDarkMode} session={session} />
+               <AnalyticsView isDarkMode={isDarkMode} session={{...session, user: {...session?.user, id: getEffectiveUserId()}}} />
            </div>
         )}
 

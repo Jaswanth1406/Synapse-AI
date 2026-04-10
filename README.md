@@ -1,20 +1,24 @@
 # ☎️ Synapse-AI: Intelligent Tele-Calling Agent
 
-> An intelligent, AI-driven tele-calling system that autonomously initiates calls, communicates naturally using human-like voice interaction, and dynamically responds to user queries based on business context. Designed to drastically reduce operational costs and eliminate human fatigue while scaling outbound outreach infinitely.
-
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue)
 ![Stack](https://img.shields.io/badge/stack-Next.js%20%7C%20FastAPI-green)
 ![Status](https://img.shields.io/badge/status-Active-brightgreen)
 
 ---
 
-## 📌 Problem Statement
+## 1. Project Title & Tagline
 
-Automating human-like outbound tele-calling outreach to reduce operational costs, eliminate agent fatigue, and scale sales and support workflows infintely while dynamically syncing intent and lead data to CRM.
+Synapse-AI is an intelligent, AI-driven tele-calling system that autonomously initiates calls, speaks in a natural human-like voice, and updates your CRM with structured intent and call insights.
 
 ---
 
-## 🚀 Features
+## 2. Problem Statement
+
+Outbound tele-calling teams spend huge time and money manually dialing, repeating the same scripts, and updating CRMs after every conversation. Human agents get fatigued, quality varies from call to call, and it is very hard to scale consistent, high-quality conversations across thousands of leads. Synapse-AI turns this into a programmable, AI-driven agent that can call prospects, hold natural conversations, qualify intent, and write back rich context to the CRM. For the OreHack problem context, it specifically targets high-volume outbound calls while keeping them context-aware, compliant, and easy to measure end-to-end.
+
+---
+
+## 3. Features
 
 | Feature                             | Description                                                                                                                                                                               |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -26,7 +30,7 @@ Automating human-like outbound tele-calling outreach to reduce operational costs
 
 ---
 
-## 🏗️ Tech Stack
+## 4. Tech Stack
 
 ### Frontend
 
@@ -43,7 +47,7 @@ Automating human-like outbound tele-calling outreach to reduce operational costs
 
 ---
 
-## 📂 Project Structure
+## 5. Project Structure
 
 ```
 Synapse-AI/
@@ -71,7 +75,7 @@ Synapse-AI/
 
 ---
 
-## ⚙️ Installation & Setup
+## 6. Installation & Setup
 
 ### Prerequisites
 
@@ -131,7 +135,7 @@ Backend webhook and scheduling server runs at `http://localhost:8000`
 
 ---
 
-## 🐳 Full Containerized Stack Setup (EspoCRM + AI Bridge)
+### 6.1 Full Containerized Stack Setup (EspoCRM + AI Bridge)
 
 If you are running the entire system using the provided Docker environment instead of just the Next.js UI, follow this guide to get the full stack (EspoCRM, Bridge Service, and Dograh AI) up and running.
 
@@ -222,9 +226,109 @@ You can check the bridge status via these endpoints:
 
 ---
 
-## 🧠 How It Works
+### 6.2 API Documentation (Backend API)
 
-### Workflow Walkthrough
+Synapse-AI provides a robust REST API for orchestrating AI calls, managing schedules, and retrieving deep lead intelligence.
+
+### Base URL
+`http://localhost:8000`
+
+### Authentication
+Most endpoints require the `X-User-ID` header for data isolation (multi-tenancy).
+
+| Header | Description | Required |
+| --- | --- | --- |
+| `X-User-ID` | The session/user ID (e.g., from Google Auth) | Yes (for user-specific data) |
+
+---
+
+### 📞 Call Operations
+
+#### 1. Instant Trigger
+`POST /api/calls/trigger`
+Dispatches a natural-language AI call immediately via Dograh AI.
+
+- **Payload:**
+```json
+{
+  "phone_number": "+919876543210",
+  "lead_name": "Sanjay",
+  "language": "en"
+}
+```
+- **Response:** `200 OK` with `workflow_run_id`.
+
+#### 2. Smart Schedule
+`POST /api/calls/schedule`
+Schedules a call at a specific IST time with automated retry logic.
+
+- **Payload:**
+```json
+{
+  "phone_number": "+91 89392 78994",
+  "scheduled_time": "2024-10-15T10:30:00",
+  "retry_count": 3
+}
+```
+- **Response:** `{"status": "success", "id": "schedule-id", ...}`
+
+#### 3. Manage Schedules
+- `GET /api/calls/scheduled`: List all user-specific pending and completed schedules.
+- `DELETE /api/calls/scheduled/{id}`: Cancel a pending scheduled task.
+
+---
+
+### 📊 Intelligence & Analytics
+
+#### 1. Real-time Dashboard Metrics
+`GET /api/analytics`
+Returns Groq AI-enriched metrics including conversion rates, sentiment distribution, and lead quality.
+
+- **Output Format:**
+```json
+{
+  "total_runs": 84,
+  "conversion_rate": 22.5,
+  "lead_quality": [ { "name": "HOT", "value": 12 }, ... ],
+  "sentiment_dist": [ { "name": "positive", "value": 45 }, ... ],
+  "duration_stats": [ { "range": "30-60s", "count": 20 }, ... ]
+}
+```
+
+#### 2. Groq AI Backfill
+`POST /api/analytics/backfill`
+Forces the system to re-analyze all historical transcripts using the Groq LLM engine to capture missing intelligence data.
+
+#### 3. Data Export
+`GET /api/analytics/csv`
+Downloads a full database dump of all call records, transcripts, and AI summaries as a CSV file.
+
+---
+
+### 🔗 Lead & CRM Integration
+
+#### 1. Batch Lead Creation
+`POST /api/leads/create`
+Pushes a batch of leads directly into the CRM/Bridge system.
+
+- **Payload:**
+```json
+{
+  "leads": [
+    { "firstName": "John", "lastName": "Doe", "phoneNumber": "+123456789" }
+  ]
+}
+```
+
+#### 2. Dograh Webhook (Inbound)
+`POST /api/webhooks/dograh`
+The endpoint where Dograh AI sends the transcript and call status after completion.
+
+---
+
+## 7. How It Works
+
+### 7.1 Workflow Walkthrough
 
 1. **Set up the Campaign:** Log into the Next.js Dashboard. The UI allows you to monitor analytics and total calls made.
 2. **Trigger a Call:** Enter a phone number on the dashboard and click **Dial Now** or schedule it for a later time.
@@ -235,36 +339,41 @@ You can check the bridge status via these endpoints:
 
 ---
 
-## 📈 Scalability
+## 8. Scalability
 
-* **Voice Engine** load is entirely offloaded to Dograh Cloud, allowing massively parallel simultaneous outbound calls without lagging the local server.
-* **Backend processing** via FastAPI natively supports high concurrency and asynchronous webhook handling.
-* **Serverless Edge DB (Neon)** handles relational storage scaling seamlessly without manual provisioning.
-
----
-
-## 💡 Feasibility
-
-Synapse-AI drastically reduces the barrier to entry for enterprise-grade outbound calling operations by leveraging robust platforms like Dograh for voice transport, Neon for serverless DB scaling, and minimal bespoke code footprint for orchestration. It fits seamlessly into existing business ecosystems via immediate REST API integration to ESPO CRM.
+- **Concurrent calls:** Voice processing is offloaded to Dograh Cloud, so many outbound calls can run in parallel while the local FastAPI backend only handles lightweight webhooks and scheduling.
+- **Growing data volume:** Call logs, transcripts, and campaign metadata are stored in Postgres (Neon DB), which can scale storage and read/write throughput as the number of calls and campaigns increases.
+- **Deployment model:** The stack can run in local dev mode or as a Dockerised composition (bridge + CRM + infra) on any cloud VM or container platform, allowing horizontal scaling by simply adding more replicas.
+- **Identified bottlenecks:** Practical limits come from external APIs (telephony provider rate limits, CRM API quotas) and LLM latency; these are isolated behind retry logic today and can be further decoupled with queues/workers in a production deployment.
 
 ---
 
-## 🌟 Novelty
+## 9. Feasibility
 
-Unlike traditional robo-dialers that just play a recorded audio file, this architecture provides a low-latency, dynamic conversational loop powered by GenAI and Retrieval-Augmented Generation. Furthermore, the inclusion of an intelligent self-correcting retry loop for unanswered leads and automatic robust CRM intent tagging removes the entire burden of manual follow-ups from human SDRs.
-
----
-
-## 🔧 Feature Depth
-
-* **Conversational AI** gracefully handles interruptions, multi-turn contexts, and dynamic discovery phases.
-* **Detailed Call Statuses:** Captures granular outcomes—completed, busy, no-answer, failed—to intelligently determine retry cadences.
-* **Multilingual support:** Extends reach seamlessly within regional demographics (Tamil, Hindi, Code-Switching).
-* **Glassmorphic UI** offers a highly premium user engagement interface for campaign oversight.
+- **Mature tooling:** The system uses mainstream, well-documented tools (Next.js/React, FastAPI, Neon Postgres, Dograh, EspoCRM), so there is no exotic or research-only dependency.
+- **Straightforward infrastructure:** A single Postgres instance, one FastAPI service, and the Next.js frontend are enough to run the core experience; optional Docker Compose files bundle them with CRM and bridge services.
+- **Production hardening path:** To take this to production you would add proper logging/monitoring, background workers for long-running tasks, a secrets manager for API keys, and cloud deployment (e.g., Docker on a managed VM or container service).
+- **Incremental rollout:** Teams can start by using only the outbound-calling and analytics APIs while keeping their existing CRM, then progressively switch to deeper integrations as needed.
 
 ---
 
-## ⚠️ Ethical Use & Disclaimer
+## 10. Novelty
+
+Unlike traditional robo-dialers that just play a recorded audio file, this architecture provides a low-latency, dynamic conversational loop powered by GenAI and Retrieval-Augmented Generation. The system not only calls and talks, but also understands user intent, tags it in the CRM, and drives a self-correcting retry loop for unanswered or short calls. The tight coupling between AI conversation, structured analytics, and CRM workflows is what differentiates Synapse-AI from simple outbound dialers.
+
+---
+
+## 11. Feature Depth
+
+- **Conversational AI engine:** Handles interruptions, multi-turn context, discovery → pitch → closing phases, and gracefully exits when the user is not interested.
+- **Outcome and retry logic:** Distinguishes completed, busy, no-answer, and failed calls, then schedules retries every few minutes with guards to avoid duplicate concurrent calls to the same number.
+- **Campaign analytics:** Produces aggregated metrics like conversion rate, sentiment distribution, call-duration buckets, and lead-quality segments that can be exported as CSV.
+- **Multilingual and regional support:** Extends reach across English and regional languages (e.g., Tamil, Hindi, code-switching) without changing the core UX.
+- **Operator dashboard:** The glassmorphism UI is not just cosmetic; it exposes call stats, campaign health, and manual override controls so a human can step in when necessary.
+
+---
+
+## 12. Ethical Use & Disclaimer
 
 Synapse-AI is strictly for **authorized business operations, lead generation, and customer support only**.
 
@@ -274,13 +383,13 @@ Use responsibly and ethically.
 
 ---
 
-## 📜 License
+## 13. License
 
 Licensed under the [Apache 2.0 License](LICENSE).
 
 ---
 
-## 🤝 Contributing
+### Contributing
 
 Contributions are welcome.
 
@@ -291,7 +400,8 @@ Contributions are welcome.
 
 ---
 
-## 🧩 Author
+## 14. Author
 
-**Synapse-AI Team**
-*Built for the Hackathon.*
+- **Name:** Jaswanth
+- **GitHub:** [github.com/Jaswanth1406](https://github.com/Jaswanth1406)
+

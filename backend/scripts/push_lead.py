@@ -1,6 +1,5 @@
 import requests
 
-# 1. Update this URL with your current Ngrok link (e.g., https://random.ngrok-free.app)
 CRM_URL = "https://be58-106-195-36-89.ngrok-free.app" 
 API_KEY = "22dfa1554b34ec6158373dd53af1961b"
 

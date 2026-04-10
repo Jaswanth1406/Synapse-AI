@@ -932,6 +932,7 @@ class TriggerCallPayload(BaseModel):
     lead_name: str | None = "Unknown"
     lead_id: str | None = "undefined"
     language: str | None = "en"  # ISO 639-1 language code
+    user_id: str | None = None
 
 @app.post("/api/calls/trigger")
 async def trigger_call(payload: TriggerCallPayload, request: Request):
@@ -956,11 +957,11 @@ async def trigger_call(payload: TriggerCallPayload, request: Request):
                     }
                 )
             else:
-                api_key = os.environ.get("NEXT_PUBLIC_DOGRAH_API_KEY")
-                agent_id = os.environ.get("DOGRAH_AGENT_ID", "af96de66-753e-4201-b166-ce5eccab3951")
+                api_key = os.environ.get("NEXT_PUBLIC_DOGRAH_API_KEY") or os.environ.get("DOGRAH_API_KEY")
+                agent_id = os.environ.get("DOGRAH_AGENT_ID") or os.environ.get("AGENT_UUID") or "af96de66-753e-4201-b166-ce5eccab3951"
                 
                 if not api_key:
-                    raise HTTPException(status_code=500, detail="Dograh credentials not configured in .env")
+                    raise HTTPException(status_code=500, detail="Dograh credentials not configured in .env (Check NEXT_PUBLIC_DOGRAH_API_KEY or DOGRAH_API_KEY)")
                     
                 dograh_url = f"https://api.dograh.com/api/v1/public/agent/{agent_id}"
                 response = await client.post(
@@ -991,7 +992,8 @@ async def trigger_call(payload: TriggerCallPayload, request: Request):
             import uuid
             call_id = str(data.get("workflow_run_id") or data.get("call_id") or data.get("id") or uuid.uuid4())
             
-            user_id = get_user_id(request)
+            # Prioritize payload user_id for mobile integration, then header
+            user_id = payload.user_id or get_user_id(request)
             pool = getattr(request.app.state, "pool", None)
             if pool:
                 try:
@@ -1008,6 +1010,8 @@ async def trigger_call(payload: TriggerCallPayload, request: Request):
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=f"Trigger Error: {e.response.text}")
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 class LeadPayload(BaseModel):
