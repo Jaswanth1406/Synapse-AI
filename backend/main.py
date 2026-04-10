@@ -191,7 +191,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # Allow Next.js frontend to make requests without browser CORS errors
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://synapse-ai-blush.vercel.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
