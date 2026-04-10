@@ -126,7 +126,9 @@ async def lifespan(app: FastAPI):
             for col_def in [
                 "ALTER TABLE call_transcripts ADD COLUMN IF NOT EXISTS lead_status TEXT",
                 "ALTER TABLE call_transcripts ADD COLUMN IF NOT EXISTS engagement_score INTEGER",
-                "ALTER TABLE call_transcripts ADD COLUMN IF NOT EXISTS summary TEXT"
+                "ALTER TABLE call_transcripts ADD COLUMN IF NOT EXISTS summary TEXT",
+                "ALTER TABLE call_transcripts ADD COLUMN IF NOT EXISTS user_id TEXT",
+                "ALTER TABLE call_transcripts ADD COLUMN IF NOT EXISTS recording_url TEXT"
             ]:
                 try:
                     await conn.execute(col_def)
@@ -142,9 +144,12 @@ async def lifespan(app: FastAPI):
                     retry_count INTEGER,
                     current_attempt INTEGER DEFAULT 0,
                     status TEXT,
+                    user_id TEXT,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
             ''')
+            # Ensure user_id exists if table was created older
+            await conn.execute("ALTER TABLE scheduled_calls ADD COLUMN IF NOT EXISTS user_id TEXT")
             
         print("Neon Database ready and tables verified.")
         
@@ -211,6 +216,11 @@ class ScheduleCallPayload(BaseModel):
     scheduled_time: str
     language: str | None = "english"
     retry_count: int | None = 3  # This is actually Max Attempts from the UI now
+    user_id: str | None = None  # Optional in payload, preferred in headers
+
+def get_user_id(request: Request) -> str:
+    # Use headers for web app, fallback to query params for CSV, then 'anonymous'
+    return request.headers.get("X-User-ID") or request.query_params.get("x_user_id") or "anonymous"
 
 # A simple POST endpoint for Dograh AI to send call completion webhooks
 @app.post("/api/webhooks/dograh")
@@ -233,6 +243,7 @@ async def handle_dograh_webhook(request: Request):
     )
     status = payload.get("status", "completed")
     call_duration = int(payload.get("duration", 0) or 0)
+    recording_url = payload.get("recording_url") or payload.get("audio_url")
     
     print(f"Received Webhook from Dograh for call: {call_id}")
     
@@ -296,7 +307,7 @@ async def handle_dograh_webhook(request: Request):
                         budget_mentioned, budget_range, urgency_level, decision_maker,
                         competitor_mentioned, pain_point, next_step, meeting_date,
                         call_duration_seconds, questions_asked, referral_source, do_not_call,
-                        lead_status, engagement_score, summary
+                        lead_status, engagement_score, summary, user_id, recording_url
                     )
                     VALUES (
                         $1, $2, $3, $4, $5, $6,
@@ -306,7 +317,7 @@ async def handle_dograh_webhook(request: Request):
                         $19, $20, $21, $22,
                         $23, $24, $25, $26,
                         $27, $28, $29, $30,
-                        $31, $32, $33
+                        $31, $32, $33, $34, $35
                     )
                     ON CONFLICT (call_id) DO UPDATE SET
                         status = EXCLUDED.status,
@@ -324,7 +335,8 @@ async def handle_dograh_webhook(request: Request):
                         caller_name = EXCLUDED.caller_name,
                         company_name = EXCLUDED.company_name,
                         call_duration_seconds = EXCLUDED.call_duration_seconds,
-                        do_not_call = EXCLUDED.do_not_call
+                        do_not_call = EXCLUDED.do_not_call,
+                        recording_url = COALESCE(EXCLUDED.recording_url, call_transcripts.recording_url)
                 ''',
                 call_id, contact_id, payload.get("phone_number"), status, intent, transcript_text,
                 payload.get("caller_name"), payload.get("company_name"), payload.get("designation"), payload.get("email_provided"),
@@ -333,7 +345,7 @@ async def handle_dograh_webhook(request: Request):
                 str(payload.get("budget_mentioned")).lower() == 'true', payload.get("budget_range"), urgency_level, str(payload.get("decision_maker")).lower() == 'true',
                 payload.get("competitor_mentioned"), pain_point, next_step, payload.get("meeting_date"),
                 call_duration, payload.get("questions_asked"), payload.get("referral_source"), str(payload.get("do_not_call")).lower() == 'true',
-                lead_status, engagement_score, summary
+                lead_status, engagement_score, summary, payload.get("user_id", "anonymous"), recording_url
                 )
             print("Successfully stored Groq-enriched transcript in Neon Database.")
         except Exception as e:
@@ -437,7 +449,7 @@ async def update_schedule_status(schedule_id: str, new_status: str, new_attempt:
         except Exception as e:
             print(f"Failed to update schedule status in DB: {e}")
 
-async def _schedule_call_task(schedule_id: str, phone: str, scheduled_time: str, language: str, max_attempts: int):
+async def _schedule_call_task(schedule_id: str, phone: str, scheduled_time: str, language: str, max_attempts: int, user_id: str = "anonymous"):
     """Handles scheduling, retry loop, and status updates for a scheduled call using Neon DB."""
     use_webhook = os.environ.get("USE_WEBHOOK", "false").lower() == "true"
     webhook_url = os.environ.get("TRIGGER_WEBHOOK_URL", "")
@@ -508,12 +520,12 @@ async def _schedule_call_task(schedule_id: str, phone: str, scheduled_time: str,
                         async def _save():
                             async with pool.acquire() as conn:
                                 await conn.execute('''
-                                    INSERT INTO call_transcripts (call_id, phone_number, status, intent, transcript, language_spoken, caller_name)
-                                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                                    INSERT INTO call_transcripts (call_id, phone_number, status, intent, transcript, language_spoken, caller_name, user_id)
+                                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                                     ON CONFLICT (call_id) DO NOTHING
                                 ''', call_id, phone, "queued", "pending",
                                    f"[{attempt_label}] Scheduled call fired at {scheduled_time}.",
-                                   language or "en", "Scheduled Lead")
+                                   language or "en", "Scheduled Lead", user_id)
                         await asyncio.wait_for(_save(), timeout=7.0)
                     except Exception as db_err:
                         print(f"[{attempt_label}] DB timeout or error: {db_err}. Continuing to polling regardless.")
@@ -596,13 +608,14 @@ async def schedule_call(payload: ScheduleCallPayload, request: Request):
     import uuid
     schedule_id = str(uuid.uuid4())
     
+    user_id = get_user_id(request)
     if pool:
         try:
             async with pool.acquire() as conn:
                 await conn.execute('''
-                    INSERT INTO scheduled_calls (id, phone_number, scheduled_time, language, retry_count, status, current_attempt)
-                    VALUES ($1, $2, $3, $4, $5, $6, 0)
-                ''', schedule_id, payload.phone_number, parser.parse(payload.scheduled_time), payload.language or "en", payload.retry_count or 3, "pending")
+                    INSERT INTO scheduled_calls (id, phone_number, scheduled_time, language, retry_count, status, current_attempt, user_id)
+                    VALUES ($1, $2, $3, $4, $5, $6, 0, $7)
+                ''', schedule_id, payload.phone_number, parser.parse(payload.scheduled_time), payload.language or "en", payload.retry_count or 3, "pending", user_id)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Database error: {e}")
     else:
@@ -614,7 +627,8 @@ async def schedule_call(payload: ScheduleCallPayload, request: Request):
         phone=payload.phone_number,
         scheduled_time=payload.scheduled_time,
         language=payload.language or "en",
-        max_attempts=payload.retry_count or 3
+        max_attempts=payload.retry_count or 3,
+        user_id=user_id
     ))
     
     return {
@@ -631,9 +645,10 @@ async def get_scheduled_calls(request: Request):
     pool = getattr(request.app.state, "pool", None)
     if not pool:
         return []
+    user_id = get_user_id(request)
     try:
         async with pool.acquire() as conn:
-            records = await conn.fetch("SELECT * FROM scheduled_calls ORDER BY created_at DESC")
+            records = await conn.fetch("SELECT * FROM scheduled_calls WHERE user_id = $1 ORDER BY created_at DESC", user_id)
             
         result = []
         for r in records:
@@ -659,12 +674,13 @@ async def cancel_scheduled_call(schedule_id: str, request: Request):
     requested_id = schedule_id.strip()
     print(f"DEBUG: Cancel requested for ID: {requested_id}")
     pool = getattr(request.app.state, "pool", None)
+    user_id = get_user_id(request)
     if pool:
         async with pool.acquire() as conn:
-            # Check if exists
-            exists = await conn.fetchval("SELECT id FROM scheduled_calls WHERE id = $1", requested_id)
+            # Check if exists and belongs to user
+            exists = await conn.fetchval("SELECT id FROM scheduled_calls WHERE id = $1 AND user_id = $2", requested_id, user_id)
             if not exists:
-                raise HTTPException(status_code=404, detail="Schedule not found")
+                raise HTTPException(status_code=404, detail="Schedule not found or unauthorized")
                 
             await conn.execute("UPDATE scheduled_calls SET status = 'cancelled' WHERE id = $1", requested_id)
             return {"status": "success", "message": "Schedule cancelled"}
@@ -679,13 +695,15 @@ async def get_call_history(request: Request):
     if not pool:
         return []
         
+    user_id = get_user_id(request)
     async with pool.acquire() as conn:
         records = await conn.fetch('''
-            SELECT call_id, phone_number, status, intent, transcript, summary, created_at 
+            SELECT call_id, phone_number, status, intent, transcript, summary, created_at, recording_url 
             FROM call_transcripts 
+            WHERE user_id = $1
             ORDER BY created_at DESC 
             LIMIT 50
-        ''')
+        ''', user_id)
         
     # Serialize datetimes safely
     result = []
@@ -706,47 +724,48 @@ async def get_dashboard_analytics(request: Request):
     if not pool:
         return {"total_runs": 0, "dispositions": [], "duration_stats": []}
         
+    user_id = get_user_id(request)
     async with pool.acquire() as conn:
         # 1. Total calls
-        total_runs = await conn.fetchval('SELECT COUNT(*) FROM call_transcripts')
+        total_runs = await conn.fetchval('SELECT COUNT(*) FROM call_transcripts WHERE user_id = $1', user_id)
         
         # 2. Intent breakdown (Groq-annotated)
         intent_records = await conn.fetch(
-            "SELECT COALESCE(intent, 'UNKNOWN') as name, COUNT(*) as value FROM call_transcripts GROUP BY intent"
+            "SELECT COALESCE(intent, 'UNKNOWN') as name, COUNT(*) as value FROM call_transcripts WHERE user_id = $1 GROUP BY intent", user_id
         )
         intent_breakdown = [dict(r) for r in intent_records]
         
         # 3. Conversion Rate: INTERESTED / total
         interested_count = await conn.fetchval(
-            "SELECT COUNT(*) FROM call_transcripts WHERE UPPER(intent) = 'INTERESTED'"
+            "SELECT COUNT(*) FROM call_transcripts WHERE UPPER(intent) = 'INTERESTED' AND user_id = $1", user_id
         )
         conversion_rate = round((int(interested_count or 0) / int(total_runs or 1)) * 100, 1)
         
         # 4. Callback rate
         callback_count = await conn.fetchval(
-            "SELECT COUNT(*) FROM call_transcripts WHERE UPPER(intent) = 'CALLBACK' OR callback_requested = true"
+            "SELECT COUNT(*) FROM call_transcripts WHERE (UPPER(intent) = 'CALLBACK' OR callback_requested = true) AND user_id = $1", user_id
         )
         
         # 5. Lead Quality Breakdown (HOT/WARM/COLD)
         lead_quality_records = await conn.fetch(
-            "SELECT COALESCE(lead_status, 'UNKNOWN') as name, COUNT(*) as value FROM call_transcripts GROUP BY lead_status"
+            "SELECT COALESCE(lead_status, 'UNKNOWN') as name, COUNT(*) as value FROM call_transcripts WHERE user_id = $1 GROUP BY lead_status", user_id
         )
         lead_quality = [dict(r) for r in lead_quality_records]
         
         # 6. Sentiment Distribution
         sentiment_records = await conn.fetch(
-            "SELECT COALESCE(sentiment, 'unknown') as name, COUNT(*) as value FROM call_transcripts GROUP BY sentiment"
+            "SELECT COALESCE(sentiment, 'unknown') as name, COUNT(*) as value FROM call_transcripts WHERE user_id = $1 GROUP BY sentiment", user_id
         )
         sentiment_dist = [dict(r) for r in sentiment_records]
         
         # 7. Average engagement score
         avg_engagement = await conn.fetchval(
-            "SELECT ROUND(AVG(engagement_score), 1) FROM call_transcripts WHERE engagement_score IS NOT NULL"
+            "SELECT ROUND(AVG(engagement_score), 1) FROM call_transcripts WHERE engagement_score IS NOT NULL AND user_id = $1", user_id
         )
         
         # 8. Dispositions (call status)
         disp_records = await conn.fetch(
-            "SELECT COALESCE(status, 'UNKNOWN') as name, COUNT(*) as value FROM call_transcripts GROUP BY status"
+            "SELECT COALESCE(status, 'UNKNOWN') as name, COUNT(*) as value FROM call_transcripts WHERE user_id = $1 GROUP BY status", user_id
         )
         dispositions = [dict(r) for r in disp_records]
         
@@ -763,6 +782,7 @@ async def get_dashboard_analytics(request: Request):
                 END AS range,
                 COUNT(*) as count
             FROM call_transcripts
+            WHERE user_id = $1
             GROUP BY 
                 CASE 
                     WHEN call_duration_seconds <= 10 THEN '0-10s'
@@ -772,7 +792,7 @@ async def get_dashboard_analytics(request: Request):
                     WHEN call_duration_seconds > 120 AND call_duration_seconds <= 180 THEN '120-180s'
                     ELSE '>180s'
                 END
-        ''')
+        ''', user_id)
         order = {'0-10s': 1, '10-30s': 2, '30-60s': 3, '60-120s': 4, '120-180s': 5, '>180s': 6}
         d_stats = sorted([dict(r) for r in duration_buckets], key=lambda x: order.get(x['range'], 99))
 
@@ -881,8 +901,9 @@ async def download_csv(request: Request):
     if not pool:
         raise HTTPException(status_code=500, detail="Database not configured")
         
+    user_id = get_user_id(request)
     async with pool.acquire() as conn:
-        records = await conn.fetch('SELECT * FROM call_transcripts')
+        records = await conn.fetch('SELECT * FROM call_transcripts WHERE user_id = $1', user_id)
         
     if not records:
          raise HTTPException(status_code=404, detail="No data available")
@@ -970,16 +991,16 @@ async def trigger_call(payload: TriggerCallPayload, request: Request):
             import uuid
             call_id = str(data.get("workflow_run_id") or data.get("call_id") or data.get("id") or uuid.uuid4())
             
-            # Immediately log to Database as "queued"
+            user_id = get_user_id(request)
             pool = getattr(request.app.state, "pool", None)
             if pool:
                 try:
                     async with pool.acquire() as conn:
                         await conn.execute('''
-                            INSERT INTO call_transcripts (call_id, phone_number, status, intent, transcript, language_spoken, caller_name)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7)
+                            INSERT INTO call_transcripts (call_id, phone_number, status, intent, transcript, language_spoken, caller_name, user_id)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                             ON CONFLICT (call_id) DO NOTHING
-                        ''', call_id, payload.phone_number, "queued", "pending", "Call initiating...", payload.language or "en", payload.lead_name)
+                        ''', call_id, payload.phone_number, "queued", "pending", "Call initiating...", payload.language or "en", payload.lead_name, user_id)
                 except Exception as db_err:
                     print(f"Warning: Could not save initial trigger to Neon: {db_err}")
             

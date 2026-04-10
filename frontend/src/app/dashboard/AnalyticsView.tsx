@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell, PieChart, Pie, Legend } from 'recharts';
 import { Download, PhoneCall, ArrowRightLeft, TrendingUp, Star, Users, MessageSquare } from 'lucide-react';
 
-export default function AnalyticsView({ isDarkMode }: { isDarkMode: boolean }) {
+export default function AnalyticsView({ isDarkMode, session }: { isDarkMode: boolean, session: any }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -19,7 +19,9 @@ export default function AnalyticsView({ isDarkMode }: { isDarkMode: boolean }) {
     const fetchAnalytics = async () => {
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-        const res = await fetch(`${apiUrl}/api/analytics`);
+        const res = await fetch(`${apiUrl}/api/analytics`, {
+            headers: { 'X-User-ID': session?.user?.id || 'anonymous' }
+        });
         if (!res.ok) throw new Error('Failed to fetch analytics');
         const json = await res.json();
         setData(json);
@@ -34,7 +36,8 @@ export default function AnalyticsView({ isDarkMode }: { isDarkMode: boolean }) {
 
   const handleDownloadCSV = () => {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    window.location.href = `${apiUrl}/api/analytics/csv`;
+    const userId = session?.user?.id || 'anonymous';
+    window.location.href = `${apiUrl}/api/analytics/csv?x_user_id=${userId}`;
   };
 
   const INTENT_COLORS: Record<string, string> = {

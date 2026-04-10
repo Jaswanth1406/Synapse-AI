@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Shield, Activity, Clock, Search, Bell, Settings, LayoutDashboard, AlertCircle, BookOpen, LogOut, Terminal, Database, Zap, UploadCloud, Server, PieChart, Moon, Sun, Download, FileText, X, Users, CalendarClock, Trash2 } from 'lucide-react';
+import { Shield, Activity, Clock, Search, Bell, Settings, LayoutDashboard, AlertCircle, BookOpen, LogOut, Terminal, Database, Zap, UploadCloud, Server, PieChart, Moon, Sun, Download, FileText, X, Users, CalendarClock, Trash2, Headphones } from 'lucide-react';
 import { authClient } from '@/lib/auth-client';
 import { useRouter } from 'next/navigation';
 import AnalyticsView from './AnalyticsView';
@@ -28,7 +28,9 @@ export default function Dashboard() {
   const fetchScheduledCalls = async () => {
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const res = await fetch(`${apiUrl}/api/calls/scheduled`);
+      const res = await fetch(`${apiUrl}/api/calls/scheduled`, {
+        headers: { 'X-User-ID': session?.user?.id || 'anonymous' }
+      });
       if (res.ok) setScheduledCalls(await res.json());
     } catch {}
   };
@@ -42,7 +44,10 @@ export default function Dashboard() {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const res = await fetch(`${apiUrl}/api/calls/schedule`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-User-ID': session?.user?.id || 'anonymous'
+        },
         body: JSON.stringify({ phone_number: schedPhone, scheduled_time: schedTime, retry_count: schedRetryCount })
       });
       if (res.ok) {
@@ -64,7 +69,10 @@ export default function Dashboard() {
 
   const handleCancelSchedule = async (id: string) => {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    await fetch(`${apiUrl}/api/calls/scheduled/${id}`, { method: 'DELETE' });
+    await fetch(`${apiUrl}/api/calls/scheduled/${id}`, { 
+      method: 'DELETE',
+      headers: { 'X-User-ID': session?.user?.id || 'anonymous' }
+    });
     fetchScheduledCalls();
   };
 
@@ -101,7 +109,10 @@ export default function Dashboard() {
           const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
           const response = await fetch(`${apiUrl}/api/leads/create`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 
+                  'Content-Type': 'application/json',
+                  'X-User-ID': session?.user?.id || 'anonymous'
+              },
               body: JSON.stringify({ leads: payloadLeads })
           });
           
@@ -171,7 +182,9 @@ export default function Dashboard() {
       const fetchHistory = async () => {
         try {
           const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-          const response = await fetch(`${apiUrl}/api/calls/history`);
+          const response = await fetch(`${apiUrl}/api/calls/history`, {
+              headers: { 'X-User-ID': session?.user?.id || 'anonymous' }
+          });
           if (response.ok) {
              const data = await response.json();
              setRecentCalls(data);
@@ -208,7 +221,8 @@ export default function Dashboard() {
       const response = await fetch(`${apiUrl}/api/calls/trigger`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'X-User-ID': session?.user?.id || 'anonymous'
         },
         body: JSON.stringify({ 
             phone_number: phoneNumber,
@@ -345,7 +359,7 @@ export default function Dashboard() {
         {/* Primary Dashboard / Analytics View */}
         {(activeView === 'dashboard' || activeView === 'analytics') && (
            <div className="animate-fade-in delay-100">
-               <AnalyticsView isDarkMode={isDarkMode} />
+               <AnalyticsView isDarkMode={isDarkMode} session={session} />
            </div>
         )}
 
@@ -471,6 +485,15 @@ export default function Dashboard() {
                                         >
                                             <AlertCircle size={14} /> Summary
                                         </button>
+                                        {call.recording_url && (
+                                            <button 
+                                                onClick={() => window.open(call.recording_url, '_blank')}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 12px', background: isDarkMode ? 'rgba(16, 185, 129, 0.1)' : '#ecfdf5', border: `1px solid ${isDarkMode ? 'rgba(16, 185, 129, 0.2)' : '#d1fae5'}`, borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', color: '#10b981', fontWeight: '600' }}
+                                                title="Download/Listen Recording"
+                                            >
+                                                <Headphones size={14} /> Audio
+                                            </button>
+                                        )}
                                         <button 
                                             onClick={() => downloadTranscriptFile(call.transcript || 'No transcript', call.call_id)}
                                             style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 12px', background: 'transparent', border: `1px solid ${isDarkMode ? '#334155' : '#cbd5e1'}`, borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', color: isDarkMode ? '#e2e8f0' : '#475569', fontWeight: '600' }}
