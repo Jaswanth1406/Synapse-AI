@@ -1,0 +1,164 @@
+services:
+  # --- EspoCRM Stack ---
+  espocrm-mysql:
+    image: mariadb:10.11
+    container_name: espocrm-mysql
+    volumes:
+      - espocrm-mysql-data:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: espocrm
+      MYSQL_USER: espocrm
+      MYSQL_PASSWORD: espocrm_password
+    restart: always
+    networks:
+      - app-network
+
+  espocrm:
+    image: espocrm/espocrm
+    container_name: espocrm
+    volumes:
+      - espocrm-app-data:/var/www/html
+      - ./espocrm/custom:/var/www/html/custom:rw
+    environment:
+      ESPOCRM_DATABASE_HOST: espocrm-mysql
+      ESPOCRM_DATABASE_USER: espocrm
+      ESPOCRM_DATABASE_PASSWORD: espocrm_password
+      ESPOCRM_DATABASE_NAME: espocrm
+    ports:
+      - "8080:80"
+    depends_on:
+      - espocrm-mysql
+    restart: always
+    networks:
+      - app-network
+
+  # --- Bridge Stack ---
+  bridge:
+    build: ./bridge
+    container_name: bridge
+    env_file: .env
+    ports:
+      - "5000:5000"
+    networks:
+      - app-network
+
+  # --- Dograh Stack ---
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    networks:
+      - app-network
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    command: >
+      --requirepass redissecret
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "-a", "redissecret", "ping" ]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+    networks:
+      - app-network
+
+  minio:
+    image: minio/minio
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  api:
+    image: dograhai/dograh-api:latest
+    env_file: .env
+    environment:
+      ENVIRONMENT: "local"
+      LOG_LEVEL: "INFO"
+      DATABASE_URL: "postgresql+asyncpg://postgres:postgres@postgres:5432/postgres"
+      REDIS_URL: "redis://:redissecret@redis:6379"
+      ENABLE_AWS_S3: "false"
+      MINIO_ENDPOINT: "minio:9000"
+      MINIO_ACCESS_KEY: "minioadmin"
+      MINIO_SECRET_KEY: "minioadmin"
+      MINIO_BUCKET: "voice-audio"
+      MINIO_SECURE: "false"
+      FASTAPI_WORKERS: 1
+      ENABLE_TRACING: "false"
+      OSS_JWT_SECRET: "ChangeMeInProduction"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  ui:
+    image: dograhai/dograh-ui:latest
+    env_file: .env
+    environment:
+      BACKEND_URL: "http://api:8000"
+      NODE_ENV: "oss"
+      ENABLE_TELEMETRY: "false"
+    ports:
+      - "3010:3010"
+    depends_on:
+      - api
+    networks:
+      - app-network
+
+  # --- Cloudflare Quick Tunnel (No Domain Needed) ---
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://bridge:5000
+    networks:
+      - app-network
+
+volumes:
+  espocrm-mysql-data:
+  espocrm-app-data:
+  postgres_data:
+  redis_data:
+  minio-data:
+
+
+networks:
+  app-network:
+    driver: bridge

@@ -6,11 +6,73 @@ from contextlib import asynccontextmanager
 from pydantic import BaseModel
 import httpx
 import os
+import asyncio
 import asyncpg
+import json
+import uuid
+from datetime import datetime, timezone, timedelta
+from dateutil import parser
 from dotenv import load_dotenv
 load_dotenv("../frontend/.env") 
 from twilio.rest import Client
 from crm_connector import push_unified_event, map_lead_status
+
+async def analyze_transcript_with_groq(transcript: str) -> dict:
+    """
+    Uses Groq LLM (llama3-70b) to intelligently extract intent, sentiment,
+    lead quality, and engagement from a call transcript.
+    """
+    groq_api_key = os.environ.get("GROQ_API_KEY")
+    if not groq_api_key or transcript == "No transcript generated.":
+        return {}
+
+    system_prompt = """
+You are a lead intelligence engine. Analyze sales call transcripts and return ONLY a valid JSON object.
+
+Return exactly this structure:
+{
+  "intent": "INTERESTED" | "NOT_INTERESTED" | "CALLBACK" | "INFO_SEEKING" | "UNKNOWN",
+  "lead_status": "HOT" | "WARM" | "COLD",
+  "sentiment": "positive" | "neutral" | "negative",
+  "callback_requested": true | false,
+  "urgency_level": "HIGH" | "MEDIUM" | "LOW",
+  "product_interest": "<what course/service they asked about or null>",
+  "pain_point": "<main concern the user expressed or null>",
+  "next_step": "CALLBACK" | "COUNSELOR_FOLLOWUP" | "DROP" | "CLOSE",
+  "summary": "<1-2 sentence summary of the conversation>",
+  "engagement_score": <integer 1-10 based on how engaged the user was>
+}
+
+Return ONLY the JSON. No markdown, no explanation.
+"""
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {groq_api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"Analyze this transcript:\n\n{transcript[:4000]}"}
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 500
+                }
+            )
+            response.raise_for_status()
+            raw = response.json()["choices"][0]["message"]["content"].strip()
+            # Strip any markdown code block if Groq wraps it
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+            return json.loads(raw)
+    except Exception as e:
+        print(f"Groq analysis failed: {e}")
+        return {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -54,10 +116,47 @@ async def lifespan(app: FastAPI):
                     questions_asked TEXT,
                     referral_source TEXT,
                     do_not_call BOOLEAN DEFAULT FALSE,
+                    lead_status TEXT,
+                    engagement_score INTEGER,
+                    summary TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             ''')
+            # Ensure Groq columns exist on older tables (safe migration)
+            for col_def in [
+                "ALTER TABLE call_transcripts ADD COLUMN IF NOT EXISTS lead_status TEXT",
+                "ALTER TABLE call_transcripts ADD COLUMN IF NOT EXISTS engagement_score INTEGER",
+                "ALTER TABLE call_transcripts ADD COLUMN IF NOT EXISTS summary TEXT"
+            ]:
+                try:
+                    await conn.execute(col_def)
+                except Exception:
+                    pass
+            # Create Scheduled Calls table
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS scheduled_calls (
+                    id TEXT PRIMARY KEY,
+                    phone_number TEXT NOT NULL,
+                    scheduled_time TIMESTAMP WITH TIME ZONE,
+                    language TEXT,
+                    retry_count INTEGER,
+                    current_attempt INTEGER DEFAULT 0,
+                    status TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            ''')
+            
         print("Neon Database ready and tables verified.")
+        
+        # --- STARTUP RECOVERY MODE ---
+        print("Checking for interrupted scheduled calls...")
+        async with app.state.pool.acquire() as conn:
+            pending_calls = await conn.fetch("SELECT * FROM scheduled_calls WHERE status IN ('pending', 'retrying')")
+            if pending_calls:
+                print(f"Recovering {len(pending_calls)} interrupted calls...")
+                for row in pending_calls:
+                    # Delay launching slightly to avoid connection storms on boot
+                    asyncio.create_task(startup_recovery_task(row))
     else:
         app.state.pool = None
         print("WARNING: DATABASE_URL not found, DB storage disabled.")
@@ -69,7 +168,7 @@ async def lifespan(app: FastAPI):
         await app.state.pool.close()
 
 # Forcing auto-reload to recreate Neon DB tables
-app = FastAPI(title="Vedaspark AI - Python Backend", lifespan=lifespan)
+app = FastAPI(title="Synapse AI - Python Backend", lifespan=lifespan)
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -89,21 +188,51 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Removed DograhWebhookPayload to prevent strict 422 validation errors. We will parse it manually.
+async def startup_recovery_task(row):
+    """Helper to cleanly launch _schedule_call_task on boot."""
+    await asyncio.sleep(2) # Give server a moment to finish starting
+    print(f"Resuming task for {row['phone_number']} (ID: {row['id']})")
+    # _schedule_call_task defined below will be available at runtime
+    await _schedule_call_task(
+        schedule_id=row['id'], 
+        phone=row['phone_number'], 
+        scheduled_time=row['scheduled_time'].isoformat(), 
+        language=row['language'], 
+        max_attempts=row['retry_count']
+    )
+
+# Maps call_id -> schedule entry for webhook-based retry detection
+call_retry_registry: dict[str, dict] = {}
+# Maps call_id -> asyncio.Event for unified waiting
+active_call_events: dict[str, asyncio.Event] = {}
 
 class ScheduleCallPayload(BaseModel):
     phone_number: str
     scheduled_time: str
     language: str | None = "english"
-    retry_count: int | None = 3
+    retry_count: int | None = 3  # This is actually Max Attempts from the UI now
 
 # A simple POST endpoint for Dograh AI to send call completion webhooks
 @app.post("/api/webhooks/dograh")
 async def handle_dograh_webhook(request: Request):
     # Dynamically accept ANY JSON Dograh sends so we never crash with 422
     payload = await request.json()
-    call_id = str(payload.get("call_id", "unknown_id"))
+    
+    # HIGH VISIBILITY LOGGING for debugging retry logic
+    print("\n" + "="*50)
+    print("🚀 DOGRAH WEBHOOK RECEIVED")
+    print(json.dumps(payload, indent=2))
+    print("="*50 + "\n")
+
+    # Detection of call_id using multiple possible keys Dograh might use
+    call_id = str(
+        payload.get("call_id") or 
+        payload.get("workflow_run_id") or 
+        payload.get("id") or 
+        "unknown_id"
+    )
     status = payload.get("status", "completed")
+    call_duration = int(payload.get("duration", 0) or 0)
     
     print(f"Received Webhook from Dograh for call: {call_id}")
     
@@ -123,15 +252,41 @@ async def handle_dograh_webhook(request: Request):
             print(f"Warning: Failed to fetch transcript from Dograh URL: {e}")
             
     print(f"Transcript Snippet: {transcript_text[:50]}...")
-            
-    # Extract Custom Extracted Variables safely
-    intent = payload.get("intent", "unknown")
+
+    # === GROQ AI INTENT ANALYSIS ===
+    print("Running Groq AI intent analysis...")
+    groq_analysis = await analyze_transcript_with_groq(transcript_text)
+    print(f"Groq Analysis Result: {groq_analysis}")
+
+    # Merge Groq analysis with Dograh payload fields (Groq takes priority)
+    intent = groq_analysis.get("intent") or payload.get("intent", "UNKNOWN")
+    sentiment = groq_analysis.get("sentiment") or payload.get("sentiment")
+    lead_status = groq_analysis.get("lead_status")
+    urgency_level = groq_analysis.get("urgency_level") or payload.get("urgency_level")
+    product_interest = groq_analysis.get("product_interest") or payload.get("product_interest")
+    pain_point = groq_analysis.get("pain_point") or payload.get("pain_point")
+    next_step = groq_analysis.get("next_step") or payload.get("next_step")
+    callback_requested = groq_analysis.get("callback_requested", False)
+    engagement_score = groq_analysis.get("engagement_score")
+    summary = groq_analysis.get("summary")
+
     contact_id = payload.get("contact_id")
     
     pool = getattr(request.app.state, "pool", None)
     if pool:
         try:
             async with pool.acquire() as conn:
+                # Add new groq columns if they don't exist (safe migration)
+                for col_def in [
+                    "ALTER TABLE call_transcripts ADD COLUMN IF NOT EXISTS lead_status TEXT",
+                    "ALTER TABLE call_transcripts ADD COLUMN IF NOT EXISTS engagement_score INTEGER",
+                    "ALTER TABLE call_transcripts ADD COLUMN IF NOT EXISTS summary TEXT"
+                ]:
+                    try:
+                        await conn.execute(col_def)
+                    except Exception:
+                        pass
+
                 await conn.execute('''
                     INSERT INTO call_transcripts (
                         call_id, contact_id, phone_number, status, intent, transcript,
@@ -140,7 +295,8 @@ async def handle_dograh_webhook(request: Request):
                         call_outcome, objection_raised, objection_detail, product_interest,
                         budget_mentioned, budget_range, urgency_level, decision_maker,
                         competitor_mentioned, pain_point, next_step, meeting_date,
-                        call_duration_seconds, questions_asked, referral_source, do_not_call
+                        call_duration_seconds, questions_asked, referral_source, do_not_call,
+                        lead_status, engagement_score, summary
                     )
                     VALUES (
                         $1, $2, $3, $4, $5, $6,
@@ -149,46 +305,37 @@ async def handle_dograh_webhook(request: Request):
                         $15, $16, $17, $18,
                         $19, $20, $21, $22,
                         $23, $24, $25, $26,
-                        $27, $28, $29, $30
+                        $27, $28, $29, $30,
+                        $31, $32, $33
                     )
                     ON CONFLICT (call_id) DO UPDATE SET
                         status = EXCLUDED.status,
                         intent = EXCLUDED.intent,
                         transcript = EXCLUDED.transcript,
-                        caller_name = EXCLUDED.caller_name,
-                        company_name = EXCLUDED.company_name,
-                        designation = EXCLUDED.designation,
-                        email_provided = EXCLUDED.email_provided,
-                        callback_requested = EXCLUDED.callback_requested,
-                        callback_time = EXCLUDED.callback_time,
-                        language_spoken = EXCLUDED.language_spoken,
                         sentiment = EXCLUDED.sentiment,
-                        call_outcome = EXCLUDED.call_outcome,
-                        objection_raised = EXCLUDED.objection_raised,
-                        objection_detail = EXCLUDED.objection_detail,
-                        product_interest = EXCLUDED.product_interest,
-                        budget_mentioned = EXCLUDED.budget_mentioned,
-                        budget_range = EXCLUDED.budget_range,
                         urgency_level = EXCLUDED.urgency_level,
-                        decision_maker = EXCLUDED.decision_maker,
-                        competitor_mentioned = EXCLUDED.competitor_mentioned,
+                        product_interest = EXCLUDED.product_interest,
                         pain_point = EXCLUDED.pain_point,
                         next_step = EXCLUDED.next_step,
-                        meeting_date = EXCLUDED.meeting_date,
+                        callback_requested = EXCLUDED.callback_requested,
+                        lead_status = EXCLUDED.lead_status,
+                        engagement_score = EXCLUDED.engagement_score,
+                        summary = EXCLUDED.summary,
+                        caller_name = EXCLUDED.caller_name,
+                        company_name = EXCLUDED.company_name,
                         call_duration_seconds = EXCLUDED.call_duration_seconds,
-                        questions_asked = EXCLUDED.questions_asked,
-                        referral_source = EXCLUDED.referral_source,
                         do_not_call = EXCLUDED.do_not_call
                 ''',
                 call_id, contact_id, payload.get("phone_number"), status, intent, transcript_text,
                 payload.get("caller_name"), payload.get("company_name"), payload.get("designation"), payload.get("email_provided"),
-                str(payload.get("callback_requested")).lower() == 'true', payload.get("callback_time"), payload.get("language_spoken"), payload.get("sentiment"),
-                payload.get("call_outcome"), str(payload.get("objection_raised")).lower() == 'true', payload.get("objection_detail"), payload.get("product_interest"),
-                str(payload.get("budget_mentioned")).lower() == 'true', payload.get("budget_range"), payload.get("urgency_level"), str(payload.get("decision_maker")).lower() == 'true',
-                payload.get("competitor_mentioned"), payload.get("pain_point"), payload.get("next_step"), payload.get("meeting_date"),
-                int(payload.get("duration", 0) or 0), payload.get("questions_asked"), payload.get("referral_source"), str(payload.get("do_not_call")).lower() == 'true'
+                callback_requested, payload.get("callback_time"), payload.get("language_spoken"), sentiment,
+                payload.get("call_outcome"), str(payload.get("objection_raised")).lower() == 'true', payload.get("objection_detail"), product_interest,
+                str(payload.get("budget_mentioned")).lower() == 'true', payload.get("budget_range"), urgency_level, str(payload.get("decision_maker")).lower() == 'true',
+                payload.get("competitor_mentioned"), pain_point, next_step, payload.get("meeting_date"),
+                call_duration, payload.get("questions_asked"), payload.get("referral_source"), str(payload.get("do_not_call")).lower() == 'true',
+                lead_status, engagement_score, summary
                 )
-            print("Successfully stored transcript in Neon Database.")
+            print("Successfully stored Groq-enriched transcript in Neon Database.")
         except Exception as e:
             print(f"Neon DB Error: Failed to save transcript - {e}")
 
@@ -206,7 +353,20 @@ async def handle_dograh_webhook(request: Request):
             data=update_data
         )
     
+    print(f"WEBHOOK DEBUG: call_id={call_id}, duration={call_duration}, payload_keys={list(payload.keys())}")
+    
+    # === Signal the active task that the webhook arrived ===
+    if call_id in active_call_events:
+        print(f"Signaling event for call_id: {call_id}")
+        # Store latest data in registry for the task to read
+        if call_id in call_retry_registry:
+            call_retry_registry[call_id]["last_webhook_payload"] = payload
+            call_retry_registry[call_id]["last_duration"] = call_duration
+            call_retry_registry[call_id]["last_status"] = status
+        active_call_events[call_id].set()
+    
     return {"message": "Webhook processed successfully", "detected_intent": intent}
+
 
 def _analyze_intent(transcript: str | None) -> str:
     if not transcript:
@@ -220,21 +380,295 @@ def _analyze_intent(transcript: str | None) -> str:
 
 
 
-# --- Advanced Feature Endpoints for Mobile App ---
+RETRY_DELAY_SECONDS = 60  # Wait 60s between automatic retries
+SHORT_CALL_THRESHOLD_SECONDS = 12  # Calls shorter than this are treated as "cut"
+
+async def _trigger_one_call(phone_number: str, language: str, lead_name: str, use_webhook: bool, webhook_url: str, api_key: str, agent_id: str) -> str:
+    """Fires a single call. Returns call_id on success, raises on failure."""
+    import uuid
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        if use_webhook:
+            response = await client.post(
+                webhook_url,
+                headers={"Content-Type": "application/json"},
+                json={"phone_number": phone_number, "lead_name": lead_name, "lead_id": "undefined"}
+            )
+        else:
+            if not api_key:
+                raise Exception("Dograh API key not configured")
+            dograh_url = f"https://api.dograh.com/api/v1/public/agent/{agent_id}"
+            # Use BACKEND_PUBLIC_URL from .env to tell Dograh where to send the webhook
+            backend_public_url = os.environ.get("BACKEND_PUBLIC_URL", "").rstrip("/")
+            webhook_callback = f"{backend_public_url}/api/webhooks/dograh" if backend_public_url else None
+            
+            payload_data = {
+                "phone_number": phone_number,
+                "initial_context": {"language": language, "lead_name": lead_name}
+            }
+            if webhook_callback:
+                payload_data["webhook_url"] = webhook_callback
+                print(f"[Dograh] Setting webhook callback to: {webhook_callback}")
+
+            response = await client.post(
+                dograh_url,
+                headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+                json=payload_data
+            )
+        response.raise_for_status()
+        try:
+            data = response.json()
+            print(f"DEBUG: Dograh Full Response: {json.dumps(data, indent=2)}")
+        except:
+            data = {"message": response.text}
+            print(f"DEBUG: Dograh Raw Response: {response.text}")
+        return str(data.get("workflow_run_id") or data.get("call_id") or data.get("id") or uuid.uuid4())
+
+
+async def update_schedule_status(schedule_id: str, new_status: str, new_attempt: int = None):
+    """Helper to update scheduled call status in DB"""
+    pool = getattr(app.state, "pool", None)
+    if pool:
+        try:
+            async with pool.acquire() as conn:
+                if new_attempt is not None:
+                    await conn.execute("UPDATE scheduled_calls SET status = $1, current_attempt = $2 WHERE id = $3", new_status, new_attempt, schedule_id)
+                else:
+                    await conn.execute("UPDATE scheduled_calls SET status = $1 WHERE id = $2", new_status, schedule_id)
+        except Exception as e:
+            print(f"Failed to update schedule status in DB: {e}")
+
+async def _schedule_call_task(schedule_id: str, phone: str, scheduled_time: str, language: str, max_attempts: int):
+    """Handles scheduling, retry loop, and status updates for a scheduled call using Neon DB."""
+    use_webhook = os.environ.get("USE_WEBHOOK", "false").lower() == "true"
+    webhook_url = os.environ.get("TRIGGER_WEBHOOK_URL", "")
+    api_key = os.environ.get("NEXT_PUBLIC_DOGRAH_API_KEY", "")
+    agent_id = os.environ.get("DOGRAH_AGENT_ID", "af96de66-753e-4201-b166-ce5eccab3951")
+    pool = getattr(app.state, "pool", None)
+
+    try:
+        # --- Sleep until scheduled time ---
+        try:
+            ist_tz = timezone(timedelta(hours=5, minutes=30))
+            now_ist = datetime.now(ist_tz)
+            sched_raw = scheduled_time.rstrip('Z')
+            if '+' in sched_raw:
+                sched_raw = sched_raw[:sched_raw.rfind('+')]
+            target_time = parser.parse(sched_raw).replace(tzinfo=ist_tz)
+            delay = (target_time - now_ist).total_seconds()
+            if delay > 0:
+                print(f"[Schedule] Call to {phone} firing in {int(delay)}s (IST: {target_time.strftime('%H:%M:%S')})")
+                await asyncio.sleep(delay)
+            else:
+                print(f"[Schedule] Scheduled time is in the past ({int(-delay)}s). Firing immediately.")
+        except Exception as e:
+            print(f"[Schedule] Could not parse time '{scheduled_time}'. Firing immediately. Error: {e}")
+
+        # --- Retry Loop ---
+        attempt = 0
+
+        while attempt < max_attempts:
+            # Check if cancelled in DB
+            db_status = None
+            if pool:
+                async with pool.acquire() as conn:
+                    db_status = await conn.fetchval("SELECT status FROM scheduled_calls WHERE id = $1", schedule_id)
+            if db_status == "cancelled":
+                print(f"[Retry] Schedule {schedule_id} was cancelled in DB. Stopping.")
+                return
+
+            attempt_label = f"Attempt {attempt + 1}/{max_attempts}"
+            print(f"[{attempt_label}] Triggering call to {phone}...")
+            
+            await update_schedule_status(schedule_id, "in_progress", attempt + 1)
+
+            try:
+                call_id = await _trigger_one_call(
+                    phone, language or "en",
+                    "Scheduled Lead", use_webhook, webhook_url, api_key, agent_id
+                )
+                print(f"[{attempt_label}] Call dispatched. call_id={call_id}")
+
+                # Register for webhook-based short-call detection
+                call_retry_registry[call_id] = {
+                    "schedule_id": schedule_id,
+                    "phone": phone,
+                    "attempt": attempt,
+                    "max_retries": max_attempts,
+                    "last_duration": -1,
+                    "last_status": "in_progress"
+                }
+                
+                event = asyncio.Event()
+                active_call_events[call_id] = event
+
+                # Save to DB (with timeout to prevent stalling)
+                if pool:
+                    try:
+                        print(f"[{attempt_label}] Saving call reference to database...")
+                        async def _save():
+                            async with pool.acquire() as conn:
+                                await conn.execute('''
+                                    INSERT INTO call_transcripts (call_id, phone_number, status, intent, transcript, language_spoken, caller_name)
+                                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                                    ON CONFLICT (call_id) DO NOTHING
+                                ''', call_id, phone, "queued", "pending",
+                                   f"[{attempt_label}] Scheduled call fired at {scheduled_time}.",
+                                   language or "en", "Scheduled Lead")
+                        await asyncio.wait_for(_save(), timeout=7.0)
+                    except Exception as db_err:
+                        print(f"[{attempt_label}] DB timeout or error: {db_err}. Continuing to polling regardless.")
+
+                # --- Wait for completion via Webhook ---
+                print(f"[{attempt_label}] Call ringing/in-progress. Waiting for Dograh webhook...")
+                
+                final_status = "unknown"
+                final_duration = -1
+                call_resolved = False
+                
+                try:
+                    # Give the call up to 3 minutes to complete + webhook to arrive
+                    await asyncio.wait_for(event.wait(), timeout=180.0)
+                    print(f"[{attempt_label}] Webhook received!")
+                    reg_data = call_retry_registry.get(call_id, {})
+                    final_status = reg_data.get("last_status", "completed")
+                    final_duration = reg_data.get("last_duration", -1)
+                    call_resolved = True
+                except asyncio.TimeoutError:
+                    print(f"[{attempt_label}] Webhook timeout after 3 minutes.")
+                
+                # Clean up registries
+                call_retry_registry.pop(call_id, None)
+                active_call_events.pop(call_id, None)
+                
+                # --- Make Retry Decision ---
+                print(f"[{attempt_label}] Deciding next steps: Duration={final_duration}s, Status={final_status}")
+                
+                needs_retry = False
+                if not call_resolved:
+                    print(f"[{attempt_label}] No webhook received. Assuming call failed or dropped.")
+                    needs_retry = True
+                elif final_status in ["no-answer", "busy", "failed", "canceled"]:
+                    print(f"[{attempt_label}] No Answer detected (Status: {final_status}).")
+                    needs_retry = True
+                elif final_duration >= 0 and final_duration < SHORT_CALL_THRESHOLD_SECONDS:
+                    print(f"[{attempt_label}] Short Call detected (Duration: {final_duration}s < {SHORT_CALL_THRESHOLD_SECONDS}s).")
+                    needs_retry = True
+                    
+                if needs_retry:
+                    attempt += 1
+                    if attempt < max_attempts:
+                        print(f"[Retry] Scheduling retry {attempt + 1}/{max_attempts} in {RETRY_DELAY_SECONDS}s...")
+                        await update_schedule_status(schedule_id, f"retrying", attempt)
+                        await asyncio.sleep(RETRY_DELAY_SECONDS)
+                        continue # Loops back to trigger the next call
+                    else:
+                        print(f"[Retry] Max attempts ({max_attempts}) reached. Failing schedule.")
+                        await update_schedule_status(schedule_id, "failed", attempt)
+                        return # Exit task
+                else:
+                    print(f"[{attempt_label}] Normal call completed successfully ({final_duration}s).")
+                    await update_schedule_status(schedule_id, "completed", attempt)
+                    return # Exit task
+
+            except Exception as e:
+                print(f"[{attempt_label}] Failed: {e}")
+                attempt += 1
+                if attempt < max_attempts:
+                    print(f"[Retry] Waiting {RETRY_DELAY_SECONDS}s before retry {attempt + 1}...")
+                    await update_schedule_status(schedule_id, f"retrying", attempt)
+                    await asyncio.sleep(RETRY_DELAY_SECONDS)
+                else:
+                    print(f"[Retry] All {max_attempts} attempts exhausted for {phone}.")
+                    await update_schedule_status(schedule_id, "failed", attempt)
+                    return
+    except Exception as e:
+        print(f"[Schedule Error] {e}")
+        await update_schedule_status(schedule_id, "failed")
 
 @app.post("/api/calls/schedule")
-async def schedule_call(payload: ScheduleCallPayload):
+async def schedule_call(payload: ScheduleCallPayload, request: Request):
     """
     Endpoint for Mobile App: Schedule a call and define retry logic & multilingual settings.
-    A background cron job will pick this up and hit the Dograh Trigger API at `scheduled_time`.
+    Spawns an async background task to trigger the call.
     """
-    # Logic to save to Neon DB goes here
+    pool = getattr(request.app.state, "pool", None)
+    
+    import uuid
+    schedule_id = str(uuid.uuid4())
+    
+    if pool:
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute('''
+                    INSERT INTO scheduled_calls (id, phone_number, scheduled_time, language, retry_count, status, current_attempt)
+                    VALUES ($1, $2, $3, $4, $5, $6, 0)
+                ''', schedule_id, payload.phone_number, parser.parse(payload.scheduled_time), payload.language or "en", payload.retry_count or 3, "pending")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Database error: {e}")
+    else:
+        raise HTTPException(status_code=500, detail="Database not connected")
+    
+    # Spawn background task immediately
+    asyncio.create_task(_schedule_call_task(
+        schedule_id=schedule_id,
+        phone=payload.phone_number,
+        scheduled_time=payload.scheduled_time,
+        language=payload.language or "en",
+        max_attempts=payload.retry_count or 3
+    ))
+    
     return {
-        "status": "success", 
-        "message": f"Call to {payload.phone_number} scheduled for {payload.scheduled_time}",
+        "status": "success",
+        "id": schedule_id,
+        "message": f"Call to {payload.phone_number} securely scheduled for {payload.scheduled_time}",
         "language_context": payload.language,
         "max_retries_configured": payload.retry_count
     }
+
+@app.get("/api/calls/scheduled")
+async def get_scheduled_calls(request: Request):
+    """Returns all pending/completed scheduled calls for the dashboard UI from Neon DB."""
+    pool = getattr(request.app.state, "pool", None)
+    if not pool:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            records = await conn.fetch("SELECT * FROM scheduled_calls ORDER BY created_at DESC")
+            
+        result = []
+        for r in records:
+            d = dict(r)
+            if d.get('scheduled_time'):
+                d['scheduled_time'] = d['scheduled_time'].isoformat()
+            if d.get('created_at'):
+                d['created_at'] = d['created_at'].isoformat()
+            
+            # Reformat to match what UI expects: stringify status
+            if "retry" in str(d.get("status")):
+                d["status"] = f"retrying ({d.get('current_attempt', 0)}/{d.get('retry_count', 3)})"
+                
+            result.append(d)
+        return result
+    except Exception as e:
+        print(f"Error fetching schedules: {e}")
+        return []
+
+@app.delete("/api/calls/scheduled/{schedule_id}")
+async def cancel_scheduled_call(schedule_id: str, request: Request):
+    """Marks a scheduled call as cancelled in the Neon DB store."""
+    requested_id = schedule_id.strip()
+    print(f"DEBUG: Cancel requested for ID: {requested_id}")
+    pool = getattr(request.app.state, "pool", None)
+    if pool:
+        async with pool.acquire() as conn:
+            # Check if exists
+            exists = await conn.fetchval("SELECT id FROM scheduled_calls WHERE id = $1", requested_id)
+            if not exists:
+                raise HTTPException(status_code=404, detail="Schedule not found")
+                
+            await conn.execute("UPDATE scheduled_calls SET status = 'cancelled' WHERE id = $1", requested_id)
+            return {"status": "success", "message": "Schedule cancelled"}
+    raise HTTPException(status_code=500, detail="Database not connected")
 
 @app.get("/api/calls/history")
 async def get_call_history(request: Request):
@@ -247,7 +681,7 @@ async def get_call_history(request: Request):
         
     async with pool.acquire() as conn:
         records = await conn.fetch('''
-            SELECT call_id, phone_number, status, intent, transcript, created_at 
+            SELECT call_id, phone_number, status, intent, transcript, summary, created_at 
             FROM call_transcripts 
             ORDER BY created_at DESC 
             LIMIT 50
@@ -266,25 +700,57 @@ async def get_call_history(request: Request):
 @app.get("/api/analytics")
 async def get_dashboard_analytics(request: Request):
     """
-    Returns aggregated metrics from the call_transcripts table.
+    Returns aggregated metrics from the call_transcripts table, enriched by Groq AI analysis.
     """
     pool = getattr(request.app.state, "pool", None)
     if not pool:
         return {"total_runs": 0, "dispositions": [], "duration_stats": []}
         
     async with pool.acquire() as conn:
-        # 1. Total Workflow Runs
+        # 1. Total calls
         total_runs = await conn.fetchval('SELECT COUNT(*) FROM call_transcripts')
         
-        # 2. Transferred Calls (Assuming status or intent corresponds to XFER, or just 0 for now)
-        transfer_count = await conn.fetchval("SELECT COUNT(*) FROM call_transcripts WHERE status='transferred' OR intent='transfer'")
+        # 2. Intent breakdown (Groq-annotated)
+        intent_records = await conn.fetch(
+            "SELECT COALESCE(intent, 'UNKNOWN') as name, COUNT(*) as value FROM call_transcripts GROUP BY intent"
+        )
+        intent_breakdown = [dict(r) for r in intent_records]
         
-        # 3. Dispositions
-        disp_records = await conn.fetch("SELECT COALESCE(status, 'UNKNOWN') as name, COUNT(*) as value FROM call_transcripts GROUP BY status")
+        # 3. Conversion Rate: INTERESTED / total
+        interested_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM call_transcripts WHERE UPPER(intent) = 'INTERESTED'"
+        )
+        conversion_rate = round((int(interested_count or 0) / int(total_runs or 1)) * 100, 1)
+        
+        # 4. Callback rate
+        callback_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM call_transcripts WHERE UPPER(intent) = 'CALLBACK' OR callback_requested = true"
+        )
+        
+        # 5. Lead Quality Breakdown (HOT/WARM/COLD)
+        lead_quality_records = await conn.fetch(
+            "SELECT COALESCE(lead_status, 'UNKNOWN') as name, COUNT(*) as value FROM call_transcripts GROUP BY lead_status"
+        )
+        lead_quality = [dict(r) for r in lead_quality_records]
+        
+        # 6. Sentiment Distribution
+        sentiment_records = await conn.fetch(
+            "SELECT COALESCE(sentiment, 'unknown') as name, COUNT(*) as value FROM call_transcripts GROUP BY sentiment"
+        )
+        sentiment_dist = [dict(r) for r in sentiment_records]
+        
+        # 7. Average engagement score
+        avg_engagement = await conn.fetchval(
+            "SELECT ROUND(AVG(engagement_score), 1) FROM call_transcripts WHERE engagement_score IS NOT NULL"
+        )
+        
+        # 8. Dispositions (call status)
+        disp_records = await conn.fetch(
+            "SELECT COALESCE(status, 'UNKNOWN') as name, COUNT(*) as value FROM call_transcripts GROUP BY status"
+        )
         dispositions = [dict(r) for r in disp_records]
         
-        # 4. Duration Stats
-        # Build histogram buckets: 0-10s, 10-30s, 30-60s, 60-120s, 120-180s, >180s
+        # 9. Duration histogram
         duration_buckets = await conn.fetch('''
             SELECT 
                 CASE 
@@ -307,17 +773,100 @@ async def get_dashboard_analytics(request: Request):
                     ELSE '>180s'
                 END
         ''')
-        
-        # Ensure ordered manually in Python to guarantee correct sequence on chart!
         order = {'0-10s': 1, '10-30s': 2, '30-60s': 3, '60-120s': 4, '120-180s': 5, '>180s': 6}
         d_stats = sorted([dict(r) for r in duration_buckets], key=lambda x: order.get(x['range'], 99))
 
         return {
-            "total_runs": total_runs or 0,
-            "transfer_count": transfer_count or 0,
+            "total_runs": int(total_runs or 0),
+            "conversion_rate": float(conversion_rate),
+            "interested_count": int(interested_count or 0),
+            "callback_count": int(callback_count or 0),
+            "avg_engagement": float(avg_engagement or 0),
+            "intent_breakdown": intent_breakdown,
+            "lead_quality": lead_quality,
+            "sentiment_dist": sentiment_dist,
             "dispositions": dispositions,
             "duration_stats": d_stats
         }
+
+@app.post("/api/analytics/backfill")
+async def backfill_groq_analysis(request: Request):
+    """
+    Re-analyzes ALL existing transcripts with Groq AI and backfills
+    missing lead_status, sentiment, intent, engagement_score, etc.
+    """
+    pool = getattr(request.app.state, "pool", None)
+    if not pool:
+        raise HTTPException(status_code=500, detail="Database not configured")
+
+    async with pool.acquire() as conn:
+        # Fetch records that are missing Groq analysis OR have generic values
+        records = await conn.fetch('''
+            SELECT id, call_id, transcript FROM call_transcripts
+            WHERE transcript IS NOT NULL
+              AND transcript != 'No transcript generated.'
+              AND transcript != 'Call initiating...'
+              AND (
+                  lead_status IS NULL
+                  OR sentiment IS NULL OR sentiment = 'unknown'
+                  OR intent IS NULL OR intent IN ('unknown', 'pending', 'UNKNOWN')
+              )
+        ''')
+
+    if not records:
+        return {"status": "done", "updated": 0, "message": "All records already have Groq analysis."}
+
+    updated = 0
+    errors = 0
+    for record in records:
+        transcript = record["transcript"]
+        call_id = record["call_id"]
+
+        groq_result = await analyze_transcript_with_groq(transcript)
+        if not groq_result:
+            errors += 1
+            continue
+
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute('''
+                    UPDATE call_transcripts SET
+                        intent = COALESCE($1, intent),
+                        lead_status = COALESCE($2, lead_status),
+                        sentiment = COALESCE($3, sentiment),
+                        urgency_level = COALESCE($4, urgency_level),
+                        product_interest = COALESCE($5, product_interest),
+                        pain_point = COALESCE($6, pain_point),
+                        next_step = COALESCE($7, next_step),
+                        callback_requested = COALESCE($8, callback_requested),
+                        engagement_score = COALESCE($9, engagement_score),
+                        summary = COALESCE($10, summary)
+                    WHERE call_id = $11
+                ''',
+                groq_result.get("intent"),
+                groq_result.get("lead_status"),
+                groq_result.get("sentiment"),
+                groq_result.get("urgency_level"),
+                groq_result.get("product_interest"),
+                groq_result.get("pain_point"),
+                groq_result.get("next_step"),
+                groq_result.get("callback_requested"),
+                groq_result.get("engagement_score"),
+                groq_result.get("summary"),
+                call_id
+                )
+                updated += 1
+                print(f"Backfilled call {call_id}: {groq_result.get('intent')} / {groq_result.get('lead_status')} / {groq_result.get('sentiment')}")
+        except Exception as e:
+            print(f"Backfill DB error for {call_id}: {e}")
+            errors += 1
+
+    return {
+        "status": "done",
+        "total_candidates": len(records),
+        "updated": updated,
+        "errors": errors
+    }
 
 from fastapi.responses import StreamingResponse
 import io
@@ -359,41 +908,67 @@ def health_check():
 
 class TriggerCallPayload(BaseModel):
     phone_number: str
+    lead_name: str | None = "Unknown"
+    lead_id: str | None = "undefined"
+    language: str | None = "en"  # ISO 639-1 language code
 
 @app.post("/api/calls/trigger")
 async def trigger_call(payload: TriggerCallPayload, request: Request):
     """
     Endpoint for Dashboard: Hits the Dograh AI API directly to trigger a call.
-    Since Dograh has Twilio configured in its own dashboard, it handles the dialing!
     """
-    api_key = os.environ.get("NEXT_PUBLIC_DOGRAH_API_KEY")
-    agent_id = os.environ.get("DOGRAH_AGENT_ID", "af96de66-753e-4201-b166-ce5eccab3951")
+    use_webhook = os.environ.get("USE_WEBHOOK", "false").lower() == "true"
     
-    if not api_key:
-        raise HTTPException(status_code=500, detail="Dograh credentials not configured in .env")
-        
     try:
-        dograh_url = f"https://api.dograh.com/api/v1/public/agent/{agent_id}"
-        
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                dograh_url,
-                headers={
-                    "X-API-Key": api_key,
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "phone_number": payload.phone_number,
-                    "initial_context": {}
-                }
-            )
+            if use_webhook:
+                webhook_url = os.environ.get("TRIGGER_WEBHOOK_URL", "https://horn-falls-consultant-nuclear.trycloudflare.com/webhook/espocrm")
+                response = await client.post(
+                    webhook_url,
+                    headers={
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "phone_number": payload.phone_number,
+                        "lead_name": payload.lead_name or "Unknown",
+                        "lead_id": payload.lead_id or "undefined"
+                    }
+                )
+            else:
+                api_key = os.environ.get("NEXT_PUBLIC_DOGRAH_API_KEY")
+                agent_id = os.environ.get("DOGRAH_AGENT_ID", "af96de66-753e-4201-b166-ce5eccab3951")
+                
+                if not api_key:
+                    raise HTTPException(status_code=500, detail="Dograh credentials not configured in .env")
+                    
+                dograh_url = f"https://api.dograh.com/api/v1/public/agent/{agent_id}"
+                response = await client.post(
+                    dograh_url,
+                    headers={
+                        "X-API-Key": api_key,
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "phone_number": payload.phone_number,
+                        "initial_context": {
+                            "language": payload.language or "en",
+                            "lead_name": payload.lead_name or "Unknown"
+                        }
+                    }
+                )
             
             response.raise_for_status()
-            data = response.json()
-            print(f"Dograh API Response: {data}")
             
-            # Extract the actual ID Dograh uses
-            call_id = str(data.get("workflow_run_id") or data.get("call_id") or data.get("id") or "unknown_id")
+            try:
+                data = response.json()
+            except:
+                data = {"message": response.text}
+                
+            print(f"API Response: {data}")
+            
+            # Extract or generate call ID
+            import uuid
+            call_id = str(data.get("workflow_run_id") or data.get("call_id") or data.get("id") or uuid.uuid4())
             
             # Immediately log to Database as "queued"
             pool = getattr(request.app.state, "pool", None)
@@ -401,18 +976,62 @@ async def trigger_call(payload: TriggerCallPayload, request: Request):
                 try:
                     async with pool.acquire() as conn:
                         await conn.execute('''
-                            INSERT INTO call_transcripts (call_id, status, intent, transcript)
-                            VALUES ($1, $2, $3, $4)
+                            INSERT INTO call_transcripts (call_id, phone_number, status, intent, transcript, language_spoken, caller_name)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7)
                             ON CONFLICT (call_id) DO NOTHING
-                        ''', call_id, "queued", "pending", "Call initiating...")
+                        ''', call_id, payload.phone_number, "queued", "pending", "Call initiating...", payload.language or "en", payload.lead_name)
                 except Exception as db_err:
                     print(f"Warning: Could not save initial trigger to Neon: {db_err}")
             
-        return {"status": "success", "message": "Dograh Agent deployed successfully!", "call_data": data}
+        return {"status": "success", "message": "Call dispatched successfully!", "call_data": data}
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=f"Dograh API Error: {e.response.text}")
+        raise HTTPException(status_code=e.response.status_code, detail=f"Trigger Error: {e.response.text}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+class LeadPayload(BaseModel):
+    firstName: str
+    lastName: str
+    phoneNumber: str
+
+class CreateLeadsPayload(BaseModel):
+    leads: list[LeadPayload]
+
+@app.post("/api/leads/create")
+async def create_crm_leads(payload: CreateLeadsPayload):
+    """
+    Endpoint for Dashboard: Creates new leads directly in EspoCRM via webhook integration.
+    """
+    successful = 0
+    errors = []
+    
+    for lead in payload.leads:
+        data = {
+            "firstName": lead.firstName,
+            "lastName": lead.lastName,
+            "phoneNumber": lead.phoneNumber,
+            "status": "New"
+        }
+        
+        try:
+            res = await push_unified_event(
+                lead={}, 
+                event_type="LEAD_CREATE",
+                data=data
+            )
+            if res:
+                successful += 1
+            else:
+                errors.append(f"Failed to push {lead.firstName} {lead.lastName}")
+        except Exception as e:
+            errors.append(str(e))
+            
+    return {
+        "status": "success",
+        "total": len(payload.leads),
+        "successful": successful,
+        "errors": errors
+    }
 
 
 if __name__ == "__main__":

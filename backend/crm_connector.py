@@ -41,6 +41,7 @@ async def push_unified_event(lead: Dict[str, Any], event_type: str, data: Dict[s
         return
 
     entity_config = {
+        'LEAD_CREATE': {'endpoint': '/v1/Lead', 'method': 'POST', 'entity': 'Lead'},
         'LEAD_UPDATE': {'endpoint': f'/v1/Lead/{lead.get("lead_id") or lead.get("id")}', 'method': 'PUT', 'entity': 'Lead'},
         'TASK_LOG': {'endpoint': '/v1/Task', 'method': 'POST', 'entity': 'Task'},
         'OPPORTUNITY': {'endpoint': '/v1/Opportunity', 'method': 'POST', 'entity': 'Opportunity'},

@@ -7,3 +7,5 @@ twilio
 python-dotenv
 python-multipart
 asyncpg
+loguru
+python-dateutil
