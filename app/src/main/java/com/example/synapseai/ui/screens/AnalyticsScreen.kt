@@ -1,5 +1,6 @@
 package com.example.synapseai.ui.screens
 
+import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -23,6 +24,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.synapseai.data.model.ChartDataItem
+import com.example.synapseai.data.model.DurationDataItem
 import com.example.synapseai.ui.components.*
 import com.example.synapseai.ui.theme.*
 import com.example.synapseai.ui.viewmodel.AnalyticsViewModel
@@ -31,169 +34,285 @@ import com.example.synapseai.ui.viewmodel.AnalyticsViewModel
 fun AnalyticsScreen(
     viewModel: AnalyticsViewModel = viewModel()
 ) {
-    val metrics by viewModel.metrics.collectAsState()
-    val weeklyData by viewModel.weeklyData.collectAsState()
+    val analytics by viewModel.analytics.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val error by viewModel.error.collectAsState()
+    val toastMessage by viewModel.toastMessage.collectAsState()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(DarkBackground)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp)
-    ) {
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(
-                    text = "Analytics",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = TextPrimary,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Call performance insights",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextTertiary
-                )
-            }
-            IconButton(onClick = { viewModel.refreshAnalytics() }) {
-                Icon(Icons.Filled.Refresh, "Refresh", tint = ElectricIndigo)
-            }
+    toastMessage?.let { msg ->
+        LaunchedEffect(msg) {
+            kotlinx.coroutines.delay(2500)
+            viewModel.clearToast()
         }
+    }
 
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // ── KPI Summary Row ──
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+    Box(modifier = Modifier.fillMaxSize().background(DarkBackground)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
         ) {
-            MetricCard(
-                title = "Total Calls",
-                value = metrics.totalCalls.toString(),
-                accentColor = ElectricIndigo,
-                modifier = Modifier.weight(1f)
-            )
-            MetricCard(
-                title = "Answered",
-                value = metrics.answeredCalls.toString(),
-                accentColor = CyanAccent,
-                modifier = Modifier.weight(1f)
-            )
-        }
+            Spacer(modifier = Modifier.height(16.dp))
 
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            MetricCard(
-                title = "Answer Rate",
-                value = "${metrics.answerRate.toInt()}%",
-                accentColor = SuccessGreen,
-                modifier = Modifier.weight(1f)
-            )
-            MetricCard(
-                title = "Conversion",
-                value = "${metrics.conversionRate.toInt()}%",
-                accentColor = WarmAmber,
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(28.dp))
-
-        // ── Donut Chart — Intent Distribution ──
-        SectionHeader(title = "Intent Distribution")
-        Spacer(modifier = Modifier.height(14.dp))
-
-        GlassCard(modifier = Modifier.fillMaxWidth()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Donut Chart
-                Box(
-                    modifier = Modifier.size(130.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    DonutChart(
-                        interested = metrics.interestedCount,
-                        notInterested = metrics.notInterestedCount,
-                        callback = metrics.callbackCount
+                Column {
+                    Text(
+                        text = "Analytics",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold
                     )
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "${metrics.totalCalls}",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                            color = TextPrimary
-                        )
-                        Text(
-                            text = "Total",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = TextTertiary
-                        )
-                    }
+                    Text(
+                        text = "Live performance insights",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextTertiary
+                    )
                 }
-
-                Spacer(modifier = Modifier.width(20.dp))
-
-                // Legend
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    LegendItem("Interested", metrics.interestedCount, InterestedColor)
-                    LegendItem("Not Interested", metrics.notInterestedCount, NotInterestedColor)
-                    LegendItem("Callback", metrics.callbackCount, CallbackColor)
+                IconButton(onClick = { viewModel.refreshAnalytics() }) {
+                    Icon(Icons.Filled.Refresh, "Refresh", tint = ElectricIndigo)
                 }
             }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ── Error Banner ──
+            error?.let { msg ->
+                GlassCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.ErrorOutline, "Error", tint = ErrorRed, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(msg, style = MaterialTheme.typography.bodySmall, color = ErrorRed)
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            if (isLoading) {
+                Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = ElectricIndigo)
+                }
+            } else {
+                // ── KPI Summary Row ──
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    MetricCard(
+                        title = "Total Calls",
+                        value = analytics.totalRuns.toString(),
+                        accentColor = ElectricIndigo,
+                        modifier = Modifier.weight(1f)
+                    )
+                    MetricCard(
+                        title = "Interested",
+                        value = analytics.interestedCount.toString(),
+                        accentColor = InterestedColor,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    MetricCard(
+                        title = "Conversion",
+                        value = "${analytics.conversionRate.toInt()}%",
+                        accentColor = SuccessGreen,
+                        modifier = Modifier.weight(1f)
+                    )
+                    MetricCard(
+                        title = "Engagement",
+                        value = String.format("%.1f", analytics.avgEngagement),
+                        accentColor = WarmAmber,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(28.dp))
+
+                // ── Intent Distribution Donut ──
+                if (analytics.intentBreakdown.isNotEmpty()) {
+                    SectionHeader(title = "Intent Distribution")
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    GlassCard(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier.size(130.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DonutChart(data = analytics.intentBreakdown)
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        text = "${analytics.totalRuns}",
+                                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                        color = TextPrimary
+                                    )
+                                    Text(
+                                        text = "Total",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = TextTertiary
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(20.dp))
+
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                analytics.intentBreakdown.forEach { item ->
+                                    LegendItem(item.name, item.value, getIntentColor(item.name))
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(28.dp))
+                }
+
+                // ── Sentiment Distribution ──
+                if (analytics.sentimentDist.isNotEmpty()) {
+                    SectionHeader(title = "Sentiment Distribution")
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    GlassCard(modifier = Modifier.fillMaxWidth()) {
+                        analytics.sentimentDist.forEach { item ->
+                            PerformanceRow(item.name.replaceFirstChar { it.uppercase() }, item.value.toString(), getSentimentColor(item.name))
+                            Spacer(modifier = Modifier.height(10.dp))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(28.dp))
+                }
+
+                // ── Duration Stats ──
+                if (analytics.durationStats.isNotEmpty()) {
+                    SectionHeader(title = "Call Duration Histogram")
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    GlassCard(modifier = Modifier.fillMaxWidth()) {
+                        DurationBarChart(data = analytics.durationStats)
+                    }
+
+                    Spacer(modifier = Modifier.height(28.dp))
+                }
+
+                // ── Dispositions ──
+                if (analytics.dispositions.isNotEmpty()) {
+                    SectionHeader(title = "Call Dispositions")
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    GlassCard(modifier = Modifier.fillMaxWidth()) {
+                        analytics.dispositions.forEach { item ->
+                            PerformanceRow(item.name.replaceFirstChar { it.uppercase() }, item.value.toString(), getDispositionColor(item.name))
+                            Spacer(modifier = Modifier.height(10.dp))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(28.dp))
+                }
+
+                // ── Action Buttons ──
+                SectionHeader(title = "Data Operations")
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { viewModel.exportCsv() },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = CyanAccent),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Filled.Download, "CSV", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Export CSV", style = MaterialTheme.typography.labelSmall)
+                    }
+                    OutlinedButton(
+                        onClick = { viewModel.triggerBackfill() },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = WarmAmber),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Filled.Sync, "Backfill", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Backfill", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(100.dp))
         }
 
-        Spacer(modifier = Modifier.height(28.dp))
-
-        // ── Weekly Bar Chart ──
-        SectionHeader(title = "Calls This Week")
-        Spacer(modifier = Modifier.height(14.dp))
-
-        GlassCard(modifier = Modifier.fillMaxWidth()) {
-            WeeklyBarChart(data = weeklyData)
+        // Toast
+        AnimatedVisibility(
+            visible = toastMessage != null,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 100.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = DarkCardElevated,
+                tonalElevation = 8.dp
+            ) {
+                Text(
+                    text = toastMessage ?: "",
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                    color = TextPrimary,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
         }
+    }
+}
 
-        Spacer(modifier = Modifier.height(28.dp))
+private fun getIntentColor(name: String): Color {
+    return when (name.uppercase()) {
+        "INTERESTED" -> InterestedColor
+        "NOT_INTERESTED", "NOT INTERESTED" -> NotInterestedColor
+        "CALLBACK" -> CallbackColor
+        "NO_ANSWER", "NO ANSWER" -> WarningOrange
+        else -> ElectricIndigo
+    }
+}
 
-        // ── Performance Summary ──
-        SectionHeader(title = "Performance Summary")
-        Spacer(modifier = Modifier.height(14.dp))
+private fun getSentimentColor(name: String): Color {
+    return when (name.lowercase()) {
+        "positive" -> SuccessGreen
+        "negative" -> ErrorRed
+        "neutral" -> WarmAmber
+        else -> TextTertiary
+    }
+}
 
-        GlassCard(modifier = Modifier.fillMaxWidth()) {
-            PerformanceRow("Active Leads", metrics.activeLeads.toString(), SuccessGreen)
-            Spacer(modifier = Modifier.height(14.dp))
-            PerformanceRow("Interested Leads", metrics.interestedCount.toString(), InterestedColor)
-            Spacer(modifier = Modifier.height(14.dp))
-            PerformanceRow("Callbacks Pending", metrics.callbackCount.toString(), CallbackColor)
-            Spacer(modifier = Modifier.height(14.dp))
-            PerformanceRow("Lost Leads", metrics.notInterestedCount.toString(), NotInterestedColor)
-        }
-
-        Spacer(modifier = Modifier.height(100.dp))
+private fun getDispositionColor(name: String): Color {
+    return when (name.lowercase()) {
+        "completed" -> SuccessGreen
+        "failed" -> ErrorRed
+        "no_answer", "no answer" -> WarningOrange
+        else -> CyanAccent
     }
 }
 
 @Composable
-private fun DonutChart(
-    interested: Int,
-    notInterested: Int,
-    callback: Int
-) {
-    val total = (interested + notInterested + callback).toFloat().coerceAtLeast(1f)
+private fun DonutChart(data: List<ChartDataItem>) {
+    val total = data.sumOf { it.value }.toFloat().coerceAtLeast(1f)
 
     var animProgress by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(data) {
         animate(0f, 1f, animationSpec = tween(1200, easing = FastOutSlowInEasing)) { v, _ ->
             animProgress = v
         }
@@ -207,47 +326,71 @@ private fun DonutChart(
             (size.height - 2 * radius) / 2
         )
         val arcSize = Size(radius * 2, radius * 2)
-
-        val intAngle = (interested / total) * 360f * animProgress
-        val notIntAngle = (notInterested / total) * 360f * animProgress
-        val callAngle = (callback / total) * 360f * animProgress
-
         var startAngle = -90f
 
-        // Interested
-        drawArc(
-            color = InterestedColor,
-            startAngle = startAngle,
-            sweepAngle = intAngle,
-            useCenter = false,
-            topLeft = topLeft,
-            size = arcSize,
-            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-        )
-        startAngle += intAngle + 3f
+        data.forEach { item ->
+            val sweepAngle = (item.value / total) * 360f * animProgress
+            drawArc(
+                color = getIntentColor(item.name),
+                startAngle = startAngle,
+                sweepAngle = sweepAngle,
+                useCenter = false,
+                topLeft = topLeft,
+                size = arcSize,
+                style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+            )
+            startAngle += sweepAngle + 3f
+        }
+    }
+}
 
-        // Not Interested
-        drawArc(
-            color = NotInterestedColor,
-            startAngle = startAngle,
-            sweepAngle = notIntAngle,
-            useCenter = false,
-            topLeft = topLeft,
-            size = arcSize,
-            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-        )
-        startAngle += notIntAngle + 3f
+@Composable
+private fun DurationBarChart(data: List<DurationDataItem>) {
+    val maxVal = data.maxOfOrNull { it.count }?.toFloat()?.coerceAtLeast(1f) ?: 1f
 
-        // Callback
-        drawArc(
-            color = CallbackColor,
-            startAngle = startAngle,
-            sweepAngle = callAngle,
-            useCenter = false,
-            topLeft = topLeft,
-            size = arcSize,
-            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-        )
+    var animProgress by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(data) {
+        animate(0f, 1f, animationSpec = tween(1000, easing = FastOutSlowInEasing)) { v, _ ->
+            animProgress = v
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(140.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.Bottom
+    ) {
+        data.forEach { item ->
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Bottom,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = (item.count * animProgress).toInt().toString(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextSecondary,
+                    fontSize = 10.sp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Box(
+                    modifier = Modifier
+                        .width(28.dp)
+                        .height((100 * (item.count / maxVal) * animProgress).dp)
+                        .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
+                        .background(ElectricIndigo.copy(alpha = 0.4f + (0.6f * item.count / maxVal)))
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = item.range,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextTertiary,
+                    fontSize = 8.sp
+                )
+            }
+        }
     }
 }
 
@@ -273,60 +416,6 @@ private fun LegendItem(label: String, count: Int, color: Color) {
             color = TextPrimary,
             fontWeight = FontWeight.Bold
         )
-    }
-}
-
-@Composable
-private fun WeeklyBarChart(data: List<Int>) {
-    val maxVal = data.maxOrNull()?.toFloat()?.coerceAtLeast(1f) ?: 1f
-    val days = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-
-    var animProgress by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(Unit) {
-        animate(0f, 1f, animationSpec = tween(1000, easing = FastOutSlowInEasing)) { v, _ ->
-            animProgress = v
-        }
-    }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(140.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.Bottom
-    ) {
-        data.forEachIndexed { index, value ->
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Bottom,
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(
-                    text = (value * animProgress).toInt().toString(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TextSecondary,
-                    fontSize = 10.sp
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Box(
-                    modifier = Modifier
-                        .width(28.dp)
-                        .height((100 * (value / maxVal) * animProgress).dp)
-                        .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
-                        .background(
-                            if (index == data.lastIndex) ElectricIndigo
-                            else ElectricIndigo.copy(alpha = 0.4f + (0.6f * value / maxVal))
-                        )
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = days.getOrElse(index) { "" },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TextTertiary,
-                    fontSize = 10.sp
-                )
-            }
-        }
     }
 }
 

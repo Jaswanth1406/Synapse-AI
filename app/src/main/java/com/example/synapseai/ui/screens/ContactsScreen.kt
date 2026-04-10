@@ -54,17 +54,28 @@ fun ContactsScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // Header
-            Text(
-                text = "Contacts",
-                style = MaterialTheme.typography.headlineMedium,
-                color = TextPrimary,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = "${contacts.size} leads in pipeline",
-                style = MaterialTheme.typography.bodySmall,
-                color = TextTertiary
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Contacts",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "${contacts.size} leads in pipeline",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextTertiary
+                    )
+                }
+                IconButton(onClick = { viewModel.fetchCrmLeads() }) {
+                    Icon(Icons.Filled.Sync, "Sync CRM", tint = ElectricIndigo)
+                }
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -96,16 +107,6 @@ fun ContactsScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 OutlinedButton(
-                    onClick = { viewModel.syncFromCrm() },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = CyanAccent),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(Icons.Filled.Sync, "Sync", modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Sync CRM", style = MaterialTheme.typography.labelSmall)
-                }
-                OutlinedButton(
                     onClick = {
                         // Demo CSV import
                         viewModel.importCsv("Name,Phone,Company\nDemo User,+91 99999 00001,TestCorp")
@@ -117,6 +118,17 @@ fun ContactsScreen(
                     Icon(Icons.Filled.UploadFile, "CSV", modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Import CSV", style = MaterialTheme.typography.labelSmall)
+                }
+                OutlinedButton(
+                    onClick = { viewModel.pushLeadsToCRM() },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = CyanAccent),
+                    modifier = Modifier.weight(1f),
+                    enabled = !isLoading
+                ) {
+                    Icon(Icons.Filled.CloudUpload, "CRM", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Push to CRM", style = MaterialTheme.typography.labelSmall)
                 }
             }
 
@@ -132,6 +144,7 @@ fun ContactsScreen(
                     ContactCard(
                         contact = contact,
                         onCall = { onCallContact(contact.phoneNumber) },
+                        onTriggerAI = { viewModel.triggerCallForContact(contact) },
                         onDelete = { viewModel.deleteContact(contact.id) }
                     )
                 }
@@ -186,6 +199,7 @@ fun ContactsScreen(
 private fun ContactCard(
     contact: Contact,
     onCall: () -> Unit,
+    onTriggerAI: () -> Unit,
     onDelete: () -> Unit
 ) {
     val statusColor = when (contact.leadStatus) {
@@ -247,6 +261,17 @@ private fun ContactCard(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Row {
+                    IconButton(
+                        onClick = onTriggerAI,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.SmartToy,
+                            "AI Call",
+                            tint = CyanAccent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                     IconButton(
                         onClick = onCall,
                         modifier = Modifier.size(32.dp)

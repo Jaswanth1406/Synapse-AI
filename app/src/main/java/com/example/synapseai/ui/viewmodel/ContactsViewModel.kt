@@ -4,14 +4,19 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.synapseai.data.model.Contact
 import com.example.synapseai.data.model.LeadStatus
+import com.example.synapseai.data.repository.CallRepository
 import com.example.synapseai.data.repository.ContactRepository
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class ContactsViewModel : ViewModel() {
 
     private val repository = ContactRepository()
+    private val callRepository = CallRepository()
 
     private val _contacts = MutableStateFlow<List<Contact>>(emptyList())
     val contacts: StateFlow<List<Contact>> = _contacts
@@ -28,49 +33,54 @@ class ContactsViewModel : ViewModel() {
     private val _toastMessage = MutableStateFlow<String?>(null)
     val toastMessage: StateFlow<String?> = _toastMessage
 
+    private var pollingJob: Job? = null
+
     init {
-        loadDemoContacts()
+        // Fetch CRM leads from the backend on first load
+        fetchCrmLeads()
+        startPolling()
     }
 
-    private fun loadDemoContacts() {
-        val demoContacts = listOf(
-            Contact("1", "Rahul Sharma", "+91 98765 43210", "TechCorp India", LeadStatus.INTERESTED),
-            Contact("2", "Priya Patel", "+91 87654 32109", "DataVision Ltd", LeadStatus.CALLBACK),
-            Contact("3", "Arjun Menon", "+91 76543 21098", "CloudNine Solutions", LeadStatus.NOT_INTERESTED),
-            Contact("4", "Sneha Reddy", "+91 65432 10987", "InnovateTech", LeadStatus.PENDING),
-            Contact("5", "Vikram Singh", "+91 54321 09876", "GrowthHub", LeadStatus.INTERESTED),
-            Contact("6", "Ananya Gupta", "+91 43210 98765", "FutureStack", LeadStatus.PENDING),
-            Contact("7", "Karthik Nair", "+91 32109 87654", "ByteForce", LeadStatus.CALLBACK),
-            Contact("8", "Meera Joshi", "+91 21098 76543", "QuantumLeap AI", LeadStatus.NO_ANSWER)
-        )
-        repository.addLocalContacts(demoContacts)
-        _contacts.value = repository.getLocalContacts()
-    }
-
-    fun syncFromCrm() {
+    /**
+     * Pull leads from EspoCRM via GET /api/leads and merge into local store.
+     */
+    fun fetchCrmLeads() {
         viewModelScope.launch {
             _isLoading.value = true
-            repository.fetchLeadsFromCrm().fold(
-                onSuccess = { leads ->
-                    val converted = leads.map { lead ->
-                        Contact(
-                            id = lead.id,
-                            name = "${lead.firstName ?: ""} ${lead.lastName ?: ""}".trim().ifEmpty { lead.name ?: "Unknown" },
-                            phoneNumber = lead.phoneNumber ?: "",
-                            company = lead.company ?: "",
-                            leadStatus = when (lead.status?.lowercase()) {
-                                "converted" -> LeadStatus.INTERESTED
-                                "dead" -> LeadStatus.NOT_INTERESTED
-                                else -> LeadStatus.PENDING
-                            }
-                        )
+            repository.fetchCrmLeads().fold(
+                onSuccess = { crmContacts ->
+                    // Add fetched CRM leads that aren't already in local store
+                    val existingIds = repository.getLocalContacts().map { it.id }.toSet()
+                    val newLeads = crmContacts.filter { it.id !in existingIds }
+                    if (newLeads.isNotEmpty()) {
+                        repository.addLocalContacts(newLeads)
                     }
-                    repository.addLocalContacts(converted)
                     _contacts.value = repository.getLocalContacts()
-                    _toastMessage.value = "Synced ${leads.size} leads from CRM"
+                    if (crmContacts.isNotEmpty()) {
+                        _toastMessage.value = "Loaded ${crmContacts.size} leads from CRM"
+                    }
+                },
+                onFailure = {
+                    // CRM fetch failed — just show local contacts
+                    _contacts.value = repository.getLocalContacts()
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
+    fun triggerCallForContact(contact: Contact) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            callRepository.triggerCall(
+                phoneNumber = contact.phoneNumber,
+                leadName = contact.name
+            ).fold(
+                onSuccess = { response ->
+                    _toastMessage.value = "Call triggered for ${contact.name}: ${response.message ?: response.status ?: "OK"}"
                 },
                 onFailure = { e ->
-                    _toastMessage.value = "CRM sync failed: ${e.message}"
+                    _toastMessage.value = "Call failed: ${e.message}"
                 }
             )
             _isLoading.value = false
@@ -106,6 +116,26 @@ class ContactsViewModel : ViewModel() {
         _contacts.value = repository.getLocalContacts()
     }
 
+    fun pushLeadsToCRM() {
+        val currentContacts = _contacts.value
+        if (currentContacts.isEmpty()) {
+            _toastMessage.value = "No contacts to push"
+            return
+        }
+        viewModelScope.launch {
+            _isLoading.value = true
+            repository.pushLeadsBatch(currentContacts).fold(
+                onSuccess = { response ->
+                    _toastMessage.value = "Pushed ${response.created} leads to CRM: ${response.message ?: "OK"}"
+                },
+                onFailure = { e ->
+                    _toastMessage.value = "CRM push failed: ${e.message}"
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
     fun updateSearchQuery(query: String) {
         _searchQuery.value = query
     }
@@ -126,5 +156,31 @@ class ContactsViewModel : ViewModel() {
             it.company.lowercase().contains(query) ||
             it.phoneNumber.contains(query)
         }
+    }
+
+    /** Auto-refresh CRM leads every 30 seconds */
+    private fun startPolling() {
+        pollingJob?.cancel()
+        pollingJob = viewModelScope.launch {
+            while (isActive) {
+                delay(30_000)
+                repository.fetchCrmLeads().fold(
+                    onSuccess = { crmContacts ->
+                        val existingIds = repository.getLocalContacts().map { it.id }.toSet()
+                        val newLeads = crmContacts.filter { it.id !in existingIds }
+                        if (newLeads.isNotEmpty()) {
+                            repository.addLocalContacts(newLeads)
+                            _contacts.value = repository.getLocalContacts()
+                        }
+                    },
+                    onFailure = { /* Silently ignore background poll failures */ }
+                )
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        pollingJob?.cancel()
     }
 }

@@ -1,48 +1,51 @@
 package com.example.synapseai.data.repository
 
-import com.example.synapseai.data.model.EspoCallLog
+import com.example.synapseai.data.api.RetrofitClient
+import com.example.synapseai.data.model.AnalyticsResponse
+import com.example.synapseai.data.model.BackfillResponse
+import com.example.synapseai.data.model.UserIdConstants
+import okhttp3.ResponseBody
 
 class AnalyticsRepository {
 
-    fun computeMetrics(callLogs: List<EspoCallLog>): AnalyticsMetrics {
-        val totalCalls = callLogs.size
-        val answered = callLogs.count { it.status?.lowercase() == "held" || it.duration != null && it.duration > 0 }
-        val answerRate = if (totalCalls > 0) (answered.toFloat() / totalCalls * 100) else 0f
+    private val api = RetrofitClient.api
 
-        val interested = callLogs.count {
-            it.transcript?.lowercase()?.contains("interested") == true &&
-                    it.transcript.lowercase().contains("not interested").not()
+    suspend fun fetchAnalytics(): Result<AnalyticsResponse> {
+        return try {
+            val response = api.getAnalytics(UserIdConstants.MASTER_USER_ID)
+            if (response.isSuccessful && response.body() != null) {
+                Result.success(response.body()!!)
+            } else {
+                Result.failure(Exception("Analytics fetch failed: ${response.code()}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
         }
-        val notInterested = callLogs.count {
-            it.transcript?.lowercase()?.contains("not interested") == true
-        }
-        val callback = callLogs.count {
-            it.transcript?.lowercase()?.contains("callback") == true ||
-                    it.transcript?.lowercase()?.contains("call back") == true
-        }
-        val conversionRate = if (totalCalls > 0) (interested.toFloat() / totalCalls * 100) else 0f
-        val activeLeads = interested + callback
+    }
 
-        return AnalyticsMetrics(
-            totalCalls = totalCalls,
-            answeredCalls = answered,
-            answerRate = answerRate,
-            interestedCount = interested,
-            notInterestedCount = notInterested,
-            callbackCount = callback,
-            conversionRate = conversionRate,
-            activeLeads = activeLeads
-        )
+    suspend fun triggerBackfill(): Result<BackfillResponse> {
+        return try {
+            val response = api.triggerBackfill()
+            if (response.isSuccessful && response.body() != null) {
+                Result.success(response.body()!!)
+            } else {
+                Result.failure(Exception("Backfill failed: ${response.code()}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun downloadCsv(): Result<ResponseBody> {
+        return try {
+            val response = api.downloadCsv(UserIdConstants.MASTER_USER_ID)
+            if (response.isSuccessful && response.body() != null) {
+                Result.success(response.body()!!)
+            } else {
+                Result.failure(Exception("CSV download failed: ${response.code()}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 }
-
-data class AnalyticsMetrics(
-    val totalCalls: Int = 0,
-    val answeredCalls: Int = 0,
-    val answerRate: Float = 0f,
-    val interestedCount: Int = 0,
-    val notInterestedCount: Int = 0,
-    val callbackCount: Int = 0,
-    val conversionRate: Float = 0f,
-    val activeLeads: Int = 0
-)

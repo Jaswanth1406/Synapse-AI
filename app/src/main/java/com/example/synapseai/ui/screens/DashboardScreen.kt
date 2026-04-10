@@ -13,7 +13,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -31,10 +30,11 @@ fun DashboardScreen(
     onNavigateToContacts: () -> Unit = {},
     onNavigateToSchedule: () -> Unit = {}
 ) {
-    val metrics by viewModel.metrics.collectAsState()
+    val analytics by viewModel.analytics.collectAsState()
     val isHealthy by viewModel.isHealthy.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val recentCalls by viewModel.recentCalls.collectAsState()
+    val error by viewModel.error.collectAsState()
 
     Column(
         modifier = Modifier
@@ -82,6 +82,18 @@ fun DashboardScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
+        // ── Error Banner ──
+        error?.let { msg ->
+            GlassCard(modifier = Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.ErrorOutline, "Error", tint = ErrorRed, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(msg, style = MaterialTheme.typography.bodySmall, color = ErrorRed)
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
         // ── Metric Cards Grid ──
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -89,15 +101,15 @@ fun DashboardScreen(
         ) {
             MetricCard(
                 title = "Total Calls",
-                value = metrics.totalCalls.toString(),
+                value = analytics.totalRuns.toString(),
                 subtitle = "All time",
                 accentColor = ElectricIndigo,
                 modifier = Modifier.weight(1f)
             )
             MetricCard(
-                title = "Answer Rate",
-                value = "${metrics.answerRate.toInt()}%",
-                subtitle = "${metrics.answeredCalls} answered",
+                title = "Conversion",
+                value = "${analytics.conversionRate.toInt()}%",
+                subtitle = "${analytics.interestedCount} interested",
                 accentColor = CyanAccent,
                 modifier = Modifier.weight(1f)
             )
@@ -110,16 +122,16 @@ fun DashboardScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             MetricCard(
-                title = "Conversion",
-                value = "${metrics.conversionRate.toInt()}%",
-                subtitle = "${metrics.interestedCount} interested",
+                title = "Engagement",
+                value = String.format("%.1f", analytics.avgEngagement),
+                subtitle = "Avg score",
                 accentColor = SuccessGreen,
                 modifier = Modifier.weight(1f)
             )
             MetricCard(
-                title = "Active Leads",
-                value = metrics.activeLeads.toString(),
-                subtitle = "Following up",
+                title = "Callbacks",
+                value = analytics.callbackCount.toString(),
+                subtitle = "Pending follow-up",
                 accentColor = WarmAmber,
                 modifier = Modifier.weight(1f)
             )
@@ -161,21 +173,28 @@ fun DashboardScreen(
         Spacer(modifier = Modifier.height(28.dp))
 
         // ── Intent Distribution ──
-        SectionHeader(title = "Lead Intent Distribution")
-        Spacer(modifier = Modifier.height(14.dp))
+        if (analytics.intentBreakdown.isNotEmpty()) {
+            SectionHeader(title = "Lead Intent Distribution")
+            Spacer(modifier = Modifier.height(14.dp))
 
-        GlassCard(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                IntentBar("Interested", metrics.interestedCount, InterestedColor, metrics.totalCalls)
-                IntentBar("Not Interest.", metrics.notInterestedCount, NotInterestedColor, metrics.totalCalls)
-                IntentBar("Callback", metrics.callbackCount, CallbackColor, metrics.totalCalls)
+            GlassCard(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    analytics.intentBreakdown.take(3).forEach { item ->
+                        val color = when (item.name.uppercase()) {
+                            "INTERESTED" -> InterestedColor
+                            "NOT_INTERESTED", "NOT INTERESTED" -> NotInterestedColor
+                            "CALLBACK" -> CallbackColor
+                            else -> TextTertiary
+                        }
+                        IntentBar(item.name, item.value, color, analytics.totalRuns)
+                    }
+                }
             }
+            Spacer(modifier = Modifier.height(28.dp))
         }
-
-        Spacer(modifier = Modifier.height(28.dp))
 
         // ── Recent Activity ──
         SectionHeader(
@@ -195,24 +214,87 @@ fun DashboardScreen(
         )
         Spacer(modifier = Modifier.height(14.dp))
 
-        if (recentCalls.isEmpty()) {
-            // Demo recent activity
-            listOf(
-                Triple("Rahul Sharma", "2m 34s", "Interested"),
-                Triple("Priya Patel", "No Answer", "Pending"),
-                Triple("Arjun Menon", "4m 12s", "Not Interested"),
-                Triple("Sneha Reddy", "1m 58s", "Callback")
-            ).forEach { (name, duration, status) ->
-                RecentCallRow(name = name, duration = duration, status = status)
-                Spacer(modifier = Modifier.height(8.dp))
+        if (isLoading) {
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = ElectricIndigo, modifier = Modifier.size(32.dp))
+            }
+        } else if (recentCalls.isEmpty()) {
+            GlassCard(modifier = Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.HistoryToggleOff, "Empty", tint = TextTertiary, modifier = Modifier.size(24.dp))
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        "No recent calls yet. Trigger your first call!",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextTertiary
+                    )
+                }
             }
         } else {
             recentCalls.forEach { call ->
-                RecentCallRow(
-                    name = call.parentName ?: call.name ?: "Unknown",
-                    duration = "${(call.duration ?: 0) / 60}m ${(call.duration ?: 0) % 60}s",
-                    status = call.status ?: "Unknown"
-                )
+                val intentColor = when (call.intent?.uppercase()) {
+                    "INTERESTED" -> InterestedColor
+                    "NOT_INTERESTED", "NOT INTERESTED" -> NotInterestedColor
+                    "CALLBACK" -> CallbackColor
+                    "INFO_SEEKING" -> ElectricIndigo
+                    else -> TextTertiary
+                }
+                GlassCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(intentColor.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                when (call.intent?.uppercase()) {
+                                    "INTERESTED" -> Icons.Filled.ThumbUp
+                                    "NOT_INTERESTED", "NOT INTERESTED" -> Icons.Filled.ThumbDown
+                                    "CALLBACK" -> Icons.Filled.PhoneCallback
+                                    "INFO_SEEKING" -> Icons.Filled.Info
+                                    else -> Icons.Filled.Phone
+                                },
+                                "Intent",
+                                tint = intentColor,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = call.phoneNumber ?: "Unknown",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TextPrimary,
+                                fontWeight = FontWeight.Medium
+                            )
+                            call.summary?.let {
+                                Text(
+                                    text = it,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary,
+                                    maxLines = 2,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                            }
+                            call.createdAt?.let {
+                                Text(
+                                    text = it.take(16).replace("T", " "),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = TextTertiary
+                                )
+                            }
+                        }
+                        StatusChip(
+                            label = call.intent ?: call.status ?: "—",
+                            color = intentColor
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.height(8.dp))
             }
         }
@@ -313,9 +395,11 @@ private fun RecentCallRow(
     status: String
 ) {
     val statusColor = when (status.lowercase()) {
-        "interested", "held" -> InterestedColor
-        "not interested" -> NotInterestedColor
+        "completed" -> InterestedColor
+        "interested" -> InterestedColor
+        "not_interested", "not interested" -> NotInterestedColor
         "callback" -> CallbackColor
+        "failed" -> ErrorRed
         else -> TextTertiary
     }
 

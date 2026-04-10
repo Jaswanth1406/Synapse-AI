@@ -5,36 +5,10 @@ import com.example.synapseai.data.model.*
 
 class ContactRepository {
 
-    private val espoCrmApi = RetrofitClient.espoCrmApi
+    private val api = RetrofitClient.api
 
     // In-memory contact store for locally added / CSV-imported contacts
     private val localContacts = mutableListOf<Contact>()
-
-    suspend fun fetchLeadsFromCrm(): Result<List<EspoLead>> {
-        return try {
-            val response = espoCrmApi.getLeads()
-            if (response.isSuccessful && response.body() != null) {
-                Result.success(response.body()!!.list)
-            } else {
-                Result.failure(Exception("CRM fetch failed: ${response.code()}"))
-            }
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    suspend fun fetchCallLogs(): Result<List<EspoCallLog>> {
-        return try {
-            val response = espoCrmApi.getCallLogs()
-            if (response.isSuccessful && response.body() != null) {
-                Result.success(response.body()!!.list)
-            } else {
-                Result.failure(Exception("Call logs fetch failed: ${response.code()}"))
-            }
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
 
     fun addLocalContact(contact: Contact) {
         localContacts.add(contact)
@@ -71,6 +45,67 @@ class ContactRepository {
                     company = if (companyIdx >= 0) cols.getOrElse(companyIdx) { "" } else ""
                 )
             } else null
+        }
+    }
+
+    /**
+     * Push local contacts to the backend CRM as leads.
+     */
+    suspend fun pushLeadsBatch(contacts: List<Contact>): Result<BatchLeadResponse> {
+        return try {
+            val leads = contacts.map { contact ->
+                val parts = contact.name.split(" ", limit = 2)
+                LeadEntry(
+                    firstName = parts.getOrElse(0) { contact.name },
+                    lastName = parts.getOrElse(1) { "" },
+                    phoneNumber = contact.phoneNumber
+                )
+            }
+            val request = BatchLeadRequest(
+                leads = leads,
+                userId = UserIdConstants.MASTER_USER_ID
+            )
+            val response = api.createLeads(request)
+            if (response.isSuccessful && response.body() != null) {
+                Result.success(response.body()!!)
+            } else {
+                Result.failure(Exception("Lead push failed: ${response.code()} ${response.message()}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Fetch leads from EspoCRM via GET /api/leads and convert to local Contact model.
+     */
+    suspend fun fetchCrmLeads(): Result<List<Contact>> {
+        return try {
+            val response = api.getCrmLeads()
+            if (response.isSuccessful && response.body() != null) {
+                val contacts = response.body()!!.map { crm ->
+                    val status = when (crm.status?.lowercase()) {
+                        "interested", "converted" -> LeadStatus.INTERESTED
+                        "not interested", "dead", "lost" -> LeadStatus.NOT_INTERESTED
+                        "callback", "follow-up" -> LeadStatus.CALLBACK
+                        "no answer" -> LeadStatus.NO_ANSWER
+                        else -> LeadStatus.PENDING
+                    }
+                    Contact(
+                        id = crm.id,
+                        name = crm.name,
+                        phoneNumber = crm.phoneNumber ?: "",
+                        company = "",
+                        leadStatus = status,
+                        lastCallDate = crm.updatedAt
+                    )
+                }
+                Result.success(contacts)
+            } else {
+                Result.failure(Exception("CRM leads fetch failed: ${response.code()}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 }

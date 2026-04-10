@@ -30,8 +30,8 @@ fun NavGraph(navController: NavHostController) {
             )
         }
 
-        composable(Screen.Campaign.route) {
-            CampaignScreen()
+        composable(Screen.CallHistory.route) {
+            CallHistoryScreen()
         }
 
         composable(Screen.Dialer.route) {

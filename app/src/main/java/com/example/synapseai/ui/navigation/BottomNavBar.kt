@@ -33,7 +33,7 @@ data class BottomNavItem(
 val bottomNavItems = listOf(
     BottomNavItem("Home", R.drawable.ic_dashboard, Screen.Dashboard.route),
     BottomNavItem("Contacts", R.drawable.ic_contacts, Screen.Contacts.route),
-    BottomNavItem("Campaign", R.drawable.ic_campaign, Screen.Campaign.route),
+    BottomNavItem("History", R.drawable.ic_campaign, Screen.CallHistory.route),
     BottomNavItem("Dialer", R.drawable.ic_dialer, Screen.Dialer.route),
     BottomNavItem("Analytics", R.drawable.ic_analytics, Screen.Analytics.route)
 )

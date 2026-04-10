@@ -2,19 +2,20 @@ package com.example.synapseai.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.synapseai.data.model.EspoCallLog
-import com.example.synapseai.data.repository.AnalyticsMetrics
+import com.example.synapseai.data.model.AnalyticsResponse
+import com.example.synapseai.data.model.CallHistoryEntry
 import com.example.synapseai.data.repository.AnalyticsRepository
 import com.example.synapseai.data.repository.CallRepository
-import com.example.synapseai.data.repository.ContactRepository
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class DashboardViewModel : ViewModel() {
 
     private val callRepository = CallRepository()
-    private val contactRepository = ContactRepository()
     private val analyticsRepository = AnalyticsRepository()
 
     private val _isLoading = MutableStateFlow(false)
@@ -23,17 +24,20 @@ class DashboardViewModel : ViewModel() {
     private val _isHealthy = MutableStateFlow<Boolean?>(null)
     val isHealthy: StateFlow<Boolean?> = _isHealthy
 
-    private val _metrics = MutableStateFlow(AnalyticsMetrics())
-    val metrics: StateFlow<AnalyticsMetrics> = _metrics
+    private val _analytics = MutableStateFlow(AnalyticsResponse())
+    val analytics: StateFlow<AnalyticsResponse> = _analytics
 
-    private val _recentCalls = MutableStateFlow<List<EspoCallLog>>(emptyList())
-    val recentCalls: StateFlow<List<EspoCallLog>> = _recentCalls
+    private val _recentCalls = MutableStateFlow<List<CallHistoryEntry>>(emptyList())
+    val recentCalls: StateFlow<List<CallHistoryEntry>> = _recentCalls
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error
 
+    private var pollingJob: Job? = null
+
     init {
         refreshDashboard()
+        startPolling()
     }
 
     fun refreshDashboard() {
@@ -47,29 +51,35 @@ class DashboardViewModel : ViewModel() {
                 onFailure = { _isHealthy.value = false }
             )
 
-            // Fetch call logs for metrics
-            contactRepository.fetchCallLogs().fold(
-                onSuccess = { logs ->
-                    _recentCalls.value = logs.take(10)
-                    _metrics.value = analyticsRepository.computeMetrics(logs)
-                },
-                onFailure = { e ->
-                    _error.value = e.message
-                    // Use demo data when API is unavailable
-                    _metrics.value = AnalyticsMetrics(
-                        totalCalls = 156,
-                        answeredCalls = 124,
-                        answerRate = 79.5f,
-                        interestedCount = 43,
-                        notInterestedCount = 61,
-                        callbackCount = 20,
-                        conversionRate = 27.6f,
-                        activeLeads = 63
-                    )
-                }
+            // Fetch live analytics
+            analyticsRepository.fetchAnalytics().fold(
+                onSuccess = { _analytics.value = it },
+                onFailure = { e -> _error.value = "Analytics: ${e.message}" }
+            )
+
+            // Fetch live call history
+            callRepository.fetchCallHistory().fold(
+                onSuccess = { _recentCalls.value = it.take(10) },
+                onFailure = { /* Call history may be empty */ }
             )
 
             _isLoading.value = false
         }
+    }
+
+    /** Auto-refresh dashboard data every 20 seconds */
+    private fun startPolling() {
+        pollingJob?.cancel()
+        pollingJob = viewModelScope.launch {
+            while (isActive) {
+                delay(20_000)
+                refreshDashboard()
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        pollingJob?.cancel()
     }
 }

@@ -3,7 +3,6 @@ package com.example.synapseai.ui.screens
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -37,11 +36,11 @@ fun DialerScreen(
 ) {
     val phoneNumber by viewModel.phoneNumber.collectAsState()
     val leadName by viewModel.leadName.collectAsState()
-    val company by viewModel.company.collectAsState()
+    val language by viewModel.language.collectAsState()
     val callState by viewModel.callState.collectAsState()
-    val callDuration by viewModel.callDuration.collectAsState()
     val error by viewModel.error.collectAsState()
     val callHistory by viewModel.callHistory.collectAsState()
+    val lastCallResponse by viewModel.lastCallResponse.collectAsState()
 
     LaunchedEffect(initialPhoneNumber) {
         if (!initialPhoneNumber.isNullOrBlank()) {
@@ -77,7 +76,7 @@ fun DialerScreen(
             enter = expandVertically() + fadeIn(),
             exit = shrinkVertically() + fadeOut()
         ) {
-            CallStateCard(callState = callState, duration = callDuration, onEnd = { viewModel.endCall() })
+            CallStateCard(callState = callState, response = lastCallResponse, onEnd = { viewModel.endCall() })
             Spacer(modifier = Modifier.height(16.dp))
         }
 
@@ -132,24 +131,8 @@ fun DialerScreen(
                         shape = RoundedCornerShape(16.dp),
                         singleLine = true
                     )
-                    OutlinedTextField(
-                        value = company,
-                        onValueChange = { viewModel.updateCompany(it) },
-                        modifier = Modifier.weight(1f),
-                        label = { Text("Company", color = TextTertiary) },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = ElectricIndigo,
-                            unfocusedBorderColor = GlassBorder,
-                            focusedContainerColor = DarkCard,
-                            unfocusedContainerColor = DarkCard,
-                            cursorColor = ElectricIndigo,
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary
-                        ),
-                        shape = RoundedCornerShape(16.dp),
-                        singleLine = true
-                    )
                 }
+
 
                 Spacer(modifier = Modifier.height(24.dp))
 
@@ -177,14 +160,32 @@ fun DialerScreen(
         Spacer(modifier = Modifier.height(24.dp))
 
         // ── Call History ──
-        SectionHeader(title = "Recent Calls")
+        SectionHeader(
+            title = "Recent Calls",
+            action = {
+                TextButton(onClick = { viewModel.refreshHistory() }) {
+                    Icon(Icons.Filled.Refresh, "Refresh", tint = ElectricIndigo, modifier = Modifier.size(16.dp))
+                }
+            }
+        )
         Spacer(modifier = Modifier.height(12.dp))
 
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(bottom = 100.dp)
         ) {
-            items(callHistory) { item ->
+            if (callHistory.isEmpty()) {
+                item {
+                    GlassCard(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            "No call history yet",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextTertiary
+                        )
+                    }
+                }
+            }
+            items(callHistory) { entry ->
                 GlassCard(modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -208,32 +209,30 @@ fun DialerScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
-                                    text = item.name,
+                                    text = entry.phoneNumber ?: "Unknown",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextPrimary,
                                     fontWeight = FontWeight.Medium
                                 )
-                                Text(
-                                    text = item.phoneNumber,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = TextTertiary
-                                )
+                                entry.summary?.let {
+                                    Text(
+                                        text = it.take(50) + if (it.length > 50) "..." else "",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TextTertiary
+                                    )
+                                }
                             }
                         }
                         Column(horizontalAlignment = Alignment.End) {
+                            val intentColor = when (entry.intent?.uppercase()) {
+                                "INTERESTED" -> InterestedColor
+                                "NOT_INTERESTED", "NOT INTERESTED" -> NotInterestedColor
+                                "CALLBACK" -> CallbackColor
+                                else -> TextTertiary
+                            }
                             StatusChip(
-                                label = item.status,
-                                color = when (item.status.lowercase()) {
-                                    "connected", "concluded" -> SuccessGreen
-                                    "no answer" -> WarningOrange
-                                    else -> TextTertiary
-                                }
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = item.duration,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = TextTertiary
+                                label = entry.intent ?: entry.status ?: "—",
+                                color = intentColor
                             )
                         }
                     }
@@ -246,7 +245,7 @@ fun DialerScreen(
 @Composable
 private fun CallStateCard(
     callState: CallState,
-    duration: Int,
+    response: String?,
     onEnd: () -> Unit
 ) {
     val stateColor = when (callState) {
@@ -292,7 +291,7 @@ private fun CallStateCard(
                             else -> Icons.Filled.Phone
                         },
                         "State",
-                        tint = stateColor.copy(alpha = if (callState == CallState.SPEAKING) pulseAlpha else 1f),
+                        tint = stateColor.copy(alpha = if (callState == CallState.INITIATING) pulseAlpha else 1f),
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -304,9 +303,9 @@ private fun CallStateCard(
                         color = stateColor,
                         fontWeight = FontWeight.Bold
                     )
-                    if (duration > 0) {
+                    response?.let {
                         Text(
-                            text = "${duration / 60}:%02d".format(duration % 60),
+                            text = it,
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary
                         )
@@ -314,7 +313,7 @@ private fun CallStateCard(
                 }
             }
 
-            if (callState == CallState.SPEAKING || callState == CallState.CONNECTED) {
+            if (callState == CallState.CONNECTED || callState == CallState.SPEAKING) {
                 IconButton(
                     onClick = onEnd,
                     modifier = Modifier

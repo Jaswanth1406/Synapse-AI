@@ -30,14 +30,8 @@ android {
             useSupportLibrary = true
         }
 
-        // ── Vedaspark AI API Configuration ──
-        // Keys loaded from local.properties (never committed to VCS)
-        buildConfigField("String", "DOGRAH_API_KEY", "\"${localProp("DOGRAH_API_KEY", "dgr_kmbt68fZ5NfpVlpE6ZBff4082QPpiLLek1CFWnO1Mvw")}\"")
-        buildConfigField("String", "DOGRAH_AGENT_ID", "\"${localProp("DOGRAH_AGENT_ID", "af96de66-753e-4201-b166-ce5eccab3951")}\"")
-        buildConfigField("String", "DOGRAH_BASE_URL", "\"${localProp("DOGRAH_BASE_URL", "https://api.dograh.com")}\"")
-        buildConfigField("String", "FASTAPI_BASE_URL", "\"${localProp("FASTAPI_BASE_URL", "http://localhost:8000")}\"")
-        buildConfigField("String", "ESPO_CRM_BASE_URL", "\"${localProp("ESPO_CRM_BASE_URL", "https://your-crm.espocrm.com")}\"")
-        buildConfigField("String", "ESPO_CRM_API_KEY", "\"${localProp("ESPO_CRM_API_KEY", "your-espo-crm-api-key")}\"")
+        // ── Synapse AI Backend Configuration ──
+        buildConfigField("String", "FASTAPI_BASE_URL", "\"${localProp("FASTAPI_BASE_URL", "https://nonbulbiferous-agnus-revivingly.ngrok-free.dev")}\"")
     }
 
     buildTypes {
