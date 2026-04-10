@@ -31,7 +31,7 @@ android {
         }
 
         // ── Synapse AI Backend Configuration ──
-        buildConfigField("String", "FASTAPI_BASE_URL", "\"${localProp("FASTAPI_BASE_URL", "https://nonbulbiferous-agnus-revivingly.ngrok-free.dev")}\"")
+        buildConfigField("String", "FASTAPI_BASE_URL", "\"${localProp("FASTAPI_BASE_URL", "https://synapse-ai-ryu9.onrender.com")}\"")
     }
 
     buildTypes {
