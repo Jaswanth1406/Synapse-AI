@@ -234,11 +234,12 @@ Synapse-AI provides a robust REST API for orchestrating AI calls, managing sched
 `http://localhost:8000`
 
 ### Authentication
-Most endpoints require the `X-User-ID` header for data isolation (multi-tenancy).
+Most endpoints require the `X-User-ID` header for data isolation (multi-tenancy). For convenience (e.g., mobile or testing), you can also pass the ID as a query parameter.
 
-| Header | Description | Required |
-| --- | --- | --- |
-| `X-User-ID` | The session/user ID (e.g., from Google Auth) | Yes (for user-specific data) |
+| Method | Description |
+| --- | --- |
+| **Header** | `X-User-ID: synapse_mvp_2024` |
+| **Query Param** | `?user_id=synapse_mvp_2024` |
 
 ---
 
@@ -253,12 +254,19 @@ Dispatches a natural-language AI call immediately via Dograh AI.
 {
   "phone_number": "+919876543210",
   "lead_name": "Sanjay",
-  "language": "en"
+  "language": "en",
+  "user_id": "optional_mobile_id"
 }
 ```
 - **Response:** `200 OK` with `workflow_run_id`.
 
-#### 2. Smart Schedule
+#### 2. Call History
+`GET /api/calls/history`
+Fetches the most recent 50 call records (logs, transcripts, and status) for a specific user.
+
+- **Usage:** `/api/calls/history?user_id=synapse_mvp_2024`
+
+#### 3. Smart Schedule
 `POST /api/calls/schedule`
 Schedules a call at a specific IST time with automated retry logic.
 

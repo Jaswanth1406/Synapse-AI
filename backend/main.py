@@ -220,7 +220,12 @@ class ScheduleCallPayload(BaseModel):
 
 def get_user_id(request: Request) -> str:
     # Use headers for web app, fallback to query params for CSV, then 'anonymous'
-    return request.headers.get("X-User-ID") or request.query_params.get("x_user_id") or "anonymous"
+    return (
+        request.headers.get("X-User-ID") or 
+        request.query_params.get("x_user_id") or 
+        request.query_params.get("user_id") or 
+        "anonymous"
+    )
 
 # A simple POST endpoint for Dograh AI to send call completion webhooks
 @app.post("/api/webhooks/dograh")
