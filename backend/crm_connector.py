@@ -82,3 +82,32 @@ async def check_connection() -> bool:
             return True
     except Exception:
         return False
+
+
+async def fetch_crm_leads(limit: int = 50) -> List[Dict[str, Any]]:
+    """Fetches a list of leads/contacts from EspoCRM.
+
+    Returns a raw list from the CRM API; caller is responsible for shaping.
+    """
+    if not CRM_BASE_URL:
+        return []
+
+    url = f"{CRM_BASE_URL}/v1/Lead?maxSize={limit}"
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url, headers=get_auth_header(), timeout=5.0)
+            res.raise_for_status()
+            data = res.json()
+
+            # EspoCRM can return either a bare list or a wrapped object
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                if "list" in data and isinstance(data["list"], list):
+                    return data["list"]
+                if "data" in data and isinstance(data["data"], list):
+                    return data["data"]
+            return []
+    except Exception as e:
+        print(f"❌ CRM Fetch Failed [LEAD_LIST]: {str(e)}")
+        return []

@@ -100,6 +100,11 @@ export default function Dashboard() {
   const [isCreatingLead, setIsCreatingLead] = useState(false);
   const [leadStatusMessage, setLeadStatusMessage] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  // CRM Contacts State
+  const [crmContacts, setCrmContacts] = useState<any[]>([]);
+  const [isLoadingContacts, setIsLoadingContacts] = useState(false);
+  const [contactsError, setContactsError] = useState<string>('');
   
   const handleCreateLead = async (e?: React.FormEvent, leadsBatch?: any[]) => {
       if (e) e.preventDefault();
@@ -214,6 +219,32 @@ export default function Dashboard() {
     }
   }, [activeView, callStatus]);
 
+  useEffect(() => {
+    if (activeView === 'contacts') {
+      const fetchContacts = async () => {
+        try {
+          setIsLoadingContacts(true);
+          setContactsError('');
+          const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+          const res = await fetch(`${apiUrl}/api/leads`);
+          if (!res.ok) {
+            setContactsError('Failed to load contacts from CRM');
+            setCrmContacts([]);
+            return;
+          }
+          const data = await res.json();
+          setCrmContacts(Array.isArray(data) ? data : []);
+        } catch (e: any) {
+          setContactsError(e?.message || 'Unexpected error while loading contacts');
+          setCrmContacts([]);
+        } finally {
+          setIsLoadingContacts(false);
+        }
+      };
+      fetchContacts();
+    }
+  }, [activeView]);
+
   const downloadTranscriptFile = (transcript: string, callId: string) => {
     const blob = new Blob([transcript], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -317,6 +348,7 @@ export default function Dashboard() {
           <NavItem id="trigger" icon={Activity} label="Trigger Call" />
           <NavItem id="schedule" icon={CalendarClock} label="Scheduled Calls" />
           <NavItem id="leads" icon={Users} label="Manage Leads" />
+          <NavItem id="contacts" icon={Headphones} label="Contacts" />
         </nav>
       </aside>
 
@@ -711,6 +743,81 @@ export default function Dashboard() {
                     </p>
                 </div>
             )}
+          </section>
+        )}
+
+        {/* CRM Contacts View */}
+        {activeView === 'contacts' && (
+          <section className="glass-panel animate-fade-in delay-200" style={{ padding: '2rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '1.5rem' }}>
+              <div style={{ background: '#ecfeff', padding: '6px', borderRadius: '8px', color: '#0e7490' }}>
+                <Headphones size={18} />
+              </div>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: '700', margin: 0 }}>CRM Contacts</h2>
+            </div>
+
+            <p style={{ fontSize: '0.9rem', color: '#64748b', marginBottom: '1.5rem' }}>
+              Live contact and lead details fetched directly from EspoCRM, including current status.
+            </p>
+
+            <div style={{ background: isDarkMode ? '#1e293b' : 'white', borderRadius: '12px', border: `1px solid ${isDarkMode ? '#334155' : '#e2e8f0'}`, overflow: 'hidden' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead style={{ background: isDarkMode ? '#0f172a' : '#f8fafc', borderBottom: `1px solid ${isDarkMode ? '#334155' : '#e2e8f0'}` }}>
+                  <tr>
+                    <th style={{ padding: '10px 14px', fontSize: '0.8rem', color: isDarkMode ? '#94a3b8' : '#64748b', fontWeight: 600 }}>Name</th>
+                    <th style={{ padding: '10px 14px', fontSize: '0.8rem', color: isDarkMode ? '#94a3b8' : '#64748b', fontWeight: 600 }}>Phone</th>
+                    <th style={{ padding: '10px 14px', fontSize: '0.8rem', color: isDarkMode ? '#94a3b8' : '#64748b', fontWeight: 600 }}>Status</th>
+                    <th style={{ padding: '10px 14px', fontSize: '0.8rem', color: isDarkMode ? '#94a3b8' : '#64748b', fontWeight: 600 }}>Created</th>
+                    <th style={{ padding: '10px 14px', fontSize: '0.8rem', color: isDarkMode ? '#94a3b8' : '#64748b', fontWeight: 600 }}>Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {isLoadingContacts && (
+                    <tr>
+                      <td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: isDarkMode ? '#94a3b8' : '#64748b', fontSize: '0.9rem' }}>
+                        Loading contacts from CRM...
+                      </td>
+                    </tr>
+                  )}
+                  {!isLoadingContacts && contactsError && (
+                    <tr>
+                      <td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: '#b91c1c', fontSize: '0.9rem' }}>
+                        {contactsError}
+                      </td>
+                    </tr>
+                  )}
+                  {!isLoadingContacts && !contactsError && crmContacts.map((c, idx) => {
+                    const status = c.status || 'Unknown';
+                    const statusColor = status === 'New' ? '#0ea5e9' : status === 'In Process' ? '#10b981' : status === 'Recycled' ? '#f97316' : '#6b7280';
+                    const statusBg = isDarkMode ? 'rgba(148,163,184,0.12)' : '#f1f5f9';
+                    return (
+                      <tr key={c.id || idx} style={{ borderBottom: `1px solid ${isDarkMode ? '#334155' : '#f1f5f9'}` }}>
+                        <td style={{ padding: '10px 14px', fontSize: '0.9rem', color: isDarkMode ? '#f8fafc' : '#0f172a', fontWeight: 500 }}>{c.name}</td>
+                        <td style={{ padding: '10px 14px', fontSize: '0.9rem', color: isDarkMode ? '#e5e7eb' : '#1e293b' }}>{c.phoneNumber || '—'}</td>
+                        <td style={{ padding: '10px 14px' }}>
+                          <span style={{ background: statusBg, color: statusColor, padding: '3px 10px', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase' }}>
+                            {status}
+                          </span>
+                        </td>
+                        <td style={{ padding: '10px 14px', fontSize: '0.8rem', color: isDarkMode ? '#94a3b8' : '#64748b' }}>
+                          {c.createdAt ? new Date(c.createdAt).toLocaleString() : '—'}
+                        </td>
+                        <td style={{ padding: '10px 14px', fontSize: '0.8rem', color: isDarkMode ? '#94a3b8' : '#64748b' }}>
+                          {c.updatedAt ? new Date(c.updatedAt).toLocaleString() : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!isLoadingContacts && !contactsError && crmContacts.length === 0 && (
+                    <tr>
+                      <td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: isDarkMode ? '#64748b' : '#94a3b8', fontSize: '0.9rem' }}>
+                        No contacts returned from CRM.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </section>
         )}
 

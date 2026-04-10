@@ -15,7 +15,7 @@ from dateutil import parser
 from dotenv import load_dotenv
 load_dotenv("../frontend/.env") 
 from twilio.rest import Client
-from crm_connector import push_unified_event, map_lead_status
+from crm_connector import push_unified_event, map_lead_status, fetch_crm_leads
 
 async def analyze_transcript_with_groq(transcript: str) -> dict:
     """
@@ -1057,6 +1057,37 @@ async def create_crm_leads(payload: CreateLeadsPayload):
         "successful": successful,
         "errors": errors
     }
+
+
+@app.get("/api/leads")
+async def list_crm_contacts() -> list[dict]:
+    """Fetches contact/lead details from EspoCRM for display in the dashboard.
+
+    Returns a simplified list with name, phone, and status fields.
+    """
+    raw_leads = await fetch_crm_leads(limit=100)
+    contacts: list[dict] = []
+
+    for lead in raw_leads:
+        first = (lead.get("firstName") or lead.get("first_name") or "").strip()
+        last = (lead.get("lastName") or lead.get("last_name") or "").strip()
+        name = (first + " " + last).strip() or lead.get("name") or "Unknown"
+        phone = lead.get("phoneNumber") or lead.get("phone") or lead.get("mobilePhone") or lead.get("mobile")
+        status = lead.get("status") or lead.get("leadStatus") or "Unknown"
+
+        created_at = lead.get("createdAt") or lead.get("dateEntered") or lead.get("createdAtDate")
+        updated_at = lead.get("updatedAt") or lead.get("dateModified")
+
+        contacts.append({
+            "id": lead.get("id"),
+            "name": name,
+            "phoneNumber": phone,
+            "status": status,
+            "createdAt": created_at,
+            "updatedAt": updated_at,
+        })
+
+    return contacts
 
 
 if __name__ == "__main__":

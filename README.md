@@ -324,6 +324,27 @@ Pushes a batch of leads directly into the CRM/Bridge system.
 `POST /api/webhooks/dograh`
 The endpoint where Dograh AI sends the transcript and call status after completion.
 
+#### 3. CRM Contact Listing
+`GET /api/leads`
+
+Returns a simplified list of contacts/leads fetched directly from EspoCRM, used by the Contacts view in the dashboard.
+
+- **Query:** none
+- **Response (example):**
+
+```json
+[
+  {
+    "id": "65f123ab1234567890abcd01",
+    "name": "John Doe",
+    "phoneNumber": "+123456789",
+    "status": "In Process",
+    "createdAt": "2024-10-10T09:35:21Z",
+    "updatedAt": "2024-10-10T10:12:03Z"
+  }
+]
+```
+
 ---
 
 ## 7. How It Works
