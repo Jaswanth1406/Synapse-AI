@@ -8,15 +8,13 @@
 
 The project relies on a modern micro-architecture connecting mobile, backend, AI orchestration, and CRM layers.
 
-```mermaid
-graph TD
-    A[Synapse AI Android App] <-->|REST API / OkHttp| B(FastAPI Backend / Render)
-    B <-->|Triggers & Webhooks| C{Dograh Cloud / AI Voice Agent}
-    B <-->|Data Sync via REST| D[(EspoCRM)]
-    C -->|Places Live Call| E((Customer / Lead))
-    E -->|Conversation| C
-    C -->|Transcripts & Summary| B
-```
+The system relies on a modern micro-architecture connecting mobile, backend, AI orchestration, and CRM layers:
+
+1. **[ Synapse AI Android App ]** ↔ (REST API via OkHttp) ↔ **[ FastAPI Backend on Render ]**
+2. **[ FastAPI Backend ]** ↔ (Triggers & Webhooks) ↔ **[ Dograh Cloud / AI Voice Agent ]**
+3. **[ FastAPI Backend ]** ↔ (Data Sync via REST) ↔ **[ EspoCRM Database ]**
+4. **[ AI Voice Agent ]** → (Places Live Phone Call) → **[ Customer / Lead ]**
+5. **[ AI Voice Agent ]** → (Returns Transcripts & Summaries) → **[ FastAPI Backend ]**
 
 ### Component Breakdown
 1. **Android App (Synapse AI):** The control layer. Uses Jetpack Compose for UI, Coroutines/Flow for asynchronous UI updates, and OkHttp/Retrofit for networking. It continuously polls the server to provide real-time updates without manual refreshes.
